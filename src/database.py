@@ -269,7 +269,8 @@ def clear_cache():
 
 def query_releases(category="movies", min_rating=0.0, max_size=15.0,
                    qualities=None, genre=None, year="2026", search=None,
-                   page=1, limit=15, deduplicate=True, days=0, origin="all"):
+                   page=1, limit=15, deduplicate=True, days=0, origin="all",
+                   require_rating=False):
     conn = get_connection()
     c = conn.cursor()
 
@@ -346,13 +347,13 @@ def query_releases(category="movies", min_rating=0.0, max_size=15.0,
         conditions.append("size_gb <= ?")
         params.append(max_size)
 
-    # Rating filter: strictly do not display movies/series without a known rating in discovery feed
+    # Rating filter:
     if category in ("movies", "series", "anime"):
         if min_rating and min_rating > 0:
             conditions.append("(imdb_rating >= ? OR kp_rating >= ?)")
             params.append(min_rating)
             params.append(min_rating)
-        elif not (search and search.strip()):
+        elif require_rating and not (search and search.strip()):
             conditions.append("(imdb_rating > 0 OR kp_rating > 0)")
 
     # Quality filter

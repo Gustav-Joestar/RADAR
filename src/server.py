@@ -82,6 +82,8 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             self.serve_static(file_path)
         elif path == "/api/items":
             self.handle_api_items(params)
+        elif path == "/api/cards_status":
+            self.handle_api_cards_status(params)
         elif path == "/api/item":
             self.handle_api_item(params)
         elif path == "/api/watchlist":
@@ -314,29 +316,19 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         if category in ("movies", "series", "anime") and not search:
             data["pages"] = max(data["pages"], page + 1)
 
-        # Check if any items on the current page need their full details parsed (never parsed before)
-        needs_details = [
+        # Launch background resolution for any items missing details, ratings or posters
+        to_hydrate = [
             it["torrent_id"] for it in data["items"]
-            if not it.get("description") and not it.get("video_info") and not it.get("audio_info")
+            if (it.get("kp_rating", 0) == 0 and it.get("imdb_rating", 0) == 0) 
+            or not it.get("poster_url") 
+            or (not it.get("description") and not it.get("video_info") and not it.get("audio_info"))
         ]
-        if needs_details:
-            # If only 1-2 items (e.g. focused search), load quickly; otherwise run in background
-            if len(needs_details) <= 2:
-                from concurrent.futures import ThreadPoolExecutor
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    list(executor.map(tracker_engine.parse_full_details, needs_details))
-                data = database.query_releases(
-                    category=category, min_rating=min_rating,
-                    max_size=max_size, qualities=qualities, genre=genre,
-                    year=year, search=search, page=page, limit=limit,
-                    deduplicate=True, origin=origin
-                )
-            else:
-                threading.Thread(
-                    target=lambda ids: [tracker_engine.parse_full_details(tid) for tid in ids],
-                    args=(needs_details,),
-                    daemon=True
-                ).start()
+        if to_hydrate:
+            threading.Thread(
+                target=lambda ids: [tracker_engine.parse_full_details(tid) for tid in ids],
+                args=(to_hydrate,),
+                daemon=True
+            ).start()
 
         log(f"✅ [РАДАР] Итого: {data['total']} релизов (выведено {len(data['items'])} на стр. {page})", "SUCCESS")
         self.send_json(data)
@@ -374,6 +366,30 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         except Exception as e:
             log(f"⚠️ Ошибка открытия карточки #{params.get('id', [''])[0]}: {e}", "ERROR")
             self.send_json({"error": str(e)})
+
+    def handle_api_cards_status(self, params):
+        try:
+            raw_ids = params.get("ids", [""])[0]
+            if not raw_ids:
+                self.send_json({"items": []})
+                return
+            tids = [i.strip() for i in raw_ids.split(",") if i.strip()]
+            if not tids:
+                self.send_json({"items": []})
+                return
+            conn = database.get_connection()
+            c = conn.cursor()
+            placeholders = ",".join(["?"] * len(tids))
+            c.execute(f"""
+                SELECT torrent_id, poster_url, kp_rating, imdb_rating, genre, country, quality
+                FROM releases
+                WHERE torrent_id IN ({placeholders})
+            """, tids)
+            rows = [dict(r) for r in c.fetchall()]
+            conn.close()
+            self.send_json({"items": rows})
+        except Exception as e:
+            self.send_json({"items": [], "error": str(e)})
 
     def handle_api_poster_search(self, params):
         title = params.get("title", [""])[0]

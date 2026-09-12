@@ -473,6 +473,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (!isSilent) {
+      renderSkeletonGrid(state.limit || 15);
       const yearInfo = (['movies', 'series'].includes(state.category)) ? ` (${state.year === 'all' ? 'все годы' : state.year})` : '';
       const origInfo = state.origin === 'russian' ? ' [Русское]' : '';
       consoleStatusText.textContent = `Запрос релизов (категория: ${state.category}${yearInfo}${origInfo}, стр. ${state.page})...`;
@@ -491,7 +492,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnPrev.disabled = data.page <= 1;
         btnNext.disabled = isDiscovery ? (data.items.length === 0) : (data.page >= state.totalPages);
 
-        if (data.total === 0) {
+        if (data.total === 0 && data.items.length === 0) {
           cardsGrid.style.display = 'none';
           emptyState.style.display = 'block';
         } else {
@@ -507,7 +508,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       })
       .finally(() => {
-        // Only hide progress bar if no posters are actively loading
         if (posterLoadTotal === 0 || posterLoadDone >= posterLoadTotal) {
           if (progressBar) progressBar.classList.remove('active');
         }
@@ -525,16 +525,111 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
   }
 
+  function renderSkeletonGrid(count = 15) {
+    let html = '';
+    for (let i = 0; i < count; i++) {
+      html += `
+        <div class="skeleton-card">
+          <div class="skeleton-poster skeleton"></div>
+          <div class="skeleton-content">
+            <div class="skeleton-line w-80 skeleton"></div>
+            <div class="skeleton-line w-40 skeleton"></div>
+            <div class="skeleton-line w-60 skeleton"></div>
+            <div class="skeleton-line w-30 skeleton"></div>
+          </div>
+        </div>
+      `;
+    }
+    cardsGrid.innerHTML = html;
+    cardsGrid.style.display = 'grid';
+    emptyState.style.display = 'none';
+  }
+
+  let hydrationTimer = null;
+  function startCardHydration(torrentIds) {
+    if (hydrationTimer) clearInterval(hydrationTimer);
+    if (!torrentIds || torrentIds.length === 0) return;
+
+    let attempts = 0;
+    const maxAttempts = 20;
+
+    hydrationTimer = setInterval(() => {
+      attempts++;
+      if (attempts > maxAttempts) {
+        clearInterval(hydrationTimer);
+        hydrationTimer = null;
+        return;
+      }
+
+      fetch(`/api/cards_status?ids=${torrentIds.join(',')}`)
+        .then(res => res.json())
+        .then(data => {
+          if (!data || !data.items) return;
+          let allDone = true;
+
+          data.items.forEach(st => {
+            const card = document.getElementById(`card-${st.torrent_id}`);
+            if (!card) return;
+
+            // 1. Hydrate Genre
+            if (st.genre && st.genre !== 'Фильм' && st.genre !== 'Сериал') {
+              const gEl = card.querySelector('.card-genres');
+              if (gEl && (gEl.classList.contains('skeleton') || gEl.textContent === 'Фильм' || gEl.textContent === 'Сериал')) {
+                gEl.className = 'card-genres';
+                gEl.textContent = st.genre;
+              }
+            }
+
+            // 2. Hydrate Country
+            if (st.country) {
+              const cEl = card.querySelector('.card-country-box');
+              if (cEl && (cEl.classList.contains('skeleton') || !cEl.querySelector('.card-country-text'))) {
+                cEl.outerHTML = formatCountryBadge(st.country);
+              }
+            }
+
+            // 3. Hydrate Poster
+            if (st.poster_url) {
+              const loader = card.querySelector('.poster-loading');
+              if (loader) {
+                const wrap = card.querySelector('.poster-wrap');
+                if (wrap) {
+                  const img = document.createElement('img');
+                  img.className = 'poster-img poster-loaded';
+                  img.src = st.poster_url;
+                  img.alt = card.dataset.titleRu || '';
+                  loader.replaceWith(img);
+                }
+              }
+            }
+
+            // 4. Hydrate Ratings
+            if (st.kp_rating > 0 || st.imdb_rating > 0) {
+              const rWrap = card.querySelector('.card-ratings-wrap');
+              if (rWrap && rWrap.querySelector('.skeleton')) {
+                let rHtml = '';
+                if (st.kp_rating > 0) rHtml += `<div class="badge-rating kp-badge" title="Кинопоиск">КП ${st.kp_rating}</div>`;
+                if (st.imdb_rating > 0) rHtml += `<div class="badge-rating imdb-badge" title="IMDb">IMDb ${st.imdb_rating}</div>`;
+                rWrap.innerHTML = rHtml;
+              }
+            }
+
+            const stillNeeds = (st.kp_rating === 0 && st.imdb_rating === 0) || !st.poster_url;
+            if (stillNeeds) allDone = false;
+          });
+
+          if (allDone) {
+            clearInterval(hydrationTimer);
+            hydrationTimer = null;
+          }
+        })
+        .catch(() => {});
+    }, 600);
+  }
+
   function renderCards(items, isWatchlist = false) {
     cardsGrid.innerHTML = '';
     items.forEach(item => {
-      // Strictly do not display movie/series cards if rating is not known
-      if (['movies', 'series'].includes(item.category || state.category) && !isWatchlist && !state.search) {
-        if ((!item.kp_rating || item.kp_rating <= 0) && (!item.imdb_rating || item.imdb_rating <= 0)) {
-          return;
-        }
-      }
-
       const card = document.createElement('div');
       card.className = 'media-card';
       card.id = `card-${item.torrent_id}`;
@@ -545,16 +640,25 @@ document.addEventListener('DOMContentLoaded', () => {
       const escapedEn = (item.title_en || '').replace(/'/g, "\\'");
 
       const posterHtml = item.poster_url 
-        ? `<img class="poster-img" src="${item.poster_url}" alt="${item.title_ru}" loading="lazy" onerror="this.onerror=null; repairPoster(this, '${item.torrent_id}', '${escapedTitle}', ${item.year || 0}, '${escapedEn}');"/><div class="poster-placeholder" style="display:none;">🎬</div>`
-        : `<div class="poster-loading" id="loader-${item.torrent_id}" data-torrent-id="${item.torrent_id}"><span class="spinner-icon">📡</span><span class="spinner-text">Загрузка обложки...</span></div>`;
+        ? `<img class="poster-img poster-loaded" src="${item.poster_url}" alt="${item.title_ru}" loading="lazy" onerror="this.onerror=null; repairPoster(this, '${item.torrent_id}', '${escapedTitle}', ${item.year || 0}, '${escapedEn}');"/><div class="poster-placeholder" style="display:none;">🎬</div>`
+        : `<div class="poster-loading skeleton" id="loader-${item.torrent_id}" data-torrent-id="${item.torrent_id}"></div>`;
 
       let ratingBadges = '';
-      if (item.kp_rating > 0) {
-        ratingBadges += `<div class="badge-rating kp-badge" title="Кинопоиск">КП ${item.kp_rating}</div>`;
+      if (item.kp_rating > 0 || item.imdb_rating > 0) {
+        if (item.kp_rating > 0) ratingBadges += `<div class="badge-rating kp-badge" title="Кинопоиск">КП ${item.kp_rating}</div>`;
+        if (item.imdb_rating > 0) ratingBadges += `<div class="badge-rating imdb-badge" title="IMDb">IMDb ${item.imdb_rating}</div>`;
+      } else {
+        ratingBadges = `<div class="badge-rating skeleton skeleton-field" title="Определение рейтинга..."></div>`;
       }
-      if (item.imdb_rating > 0) {
-        ratingBadges += `<div class="badge-rating imdb-badge" title="IMDb">IMDb ${item.imdb_rating}</div>`;
-      }
+
+      const hasRealGenre = item.genre && item.genre !== 'Фильм' && item.genre !== 'Сериал';
+      const genreHtml = hasRealGenre
+        ? `<div class="card-genres">${item.genre}</div>`
+        : `<div class="card-genres skeleton skeleton-field"></div>`;
+
+      const countryHtml = item.country
+        ? formatCountryBadge(item.country)
+        : `<div class="card-country-box skeleton skeleton-field" style="margin-top: 4px;"></div>`;
 
       // Status badges for items in watchlist or ignored
       let statusBadgeHtml = '';
@@ -605,8 +709,8 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="card-content">
           <h3 class="card-title" title="${item.title}">${item.title_ru}</h3>
           <div class="card-orig">${item.title_en ? `${item.title_en} · ` : ''}${item.year || ''}</div>
-          <div class="card-genres">${item.genre || (item.category === 'series' ? 'Сериал' : 'Фильм')}</div>
-          ${formatCountryBadge(item.country)}
+          ${genreHtml}
+          ${countryHtml}
           <div class="card-meta-row">
             <span class="card-size">${item.size_str || `${item.size_gb} GB`}</span>
             <div class="card-peers">
@@ -619,22 +723,9 @@ document.addEventListener('DOMContentLoaded', () => {
       cardsGrid.appendChild(card);
     });
 
-    // Start loading missing posters with retry mechanism
-    const loadersOnPage = document.querySelectorAll('.poster-loading[data-torrent-id]');
-    if (loadersOnPage.length > 0) {
-      // Clear any previous retry timers
-      Object.values(posterRetryTimers).forEach(t => clearTimeout(t));
-      posterRetryTimers = {};
-      posterLoadTotal = loadersOnPage.length;
-      posterLoadDone = 0;
-      updatePosterProgress(0, posterLoadTotal);
-      progressBar.classList.add('active');
-
-      loadersOnPage.forEach(loader => {
-        const tid = loader.getAttribute('data-torrent-id');
-        tryLoadPoster(tid, 1);
-      });
-    }
+    // Start live hydration for cards on the current page
+    const candidateIds = items.map(it => it.torrent_id);
+    startCardHydration(candidateIds);
   }
 
   window.repairPoster = function(imgElem, torrentId, titleRu, year, titleEn) {
@@ -838,9 +929,27 @@ document.addEventListener('DOMContentLoaded', () => {
   function openModal(torrentId) {
     modalOverlay.style.display = 'flex';
     modalContent.innerHTML = `
-      <div style="grid-column: 1/-1; text-align: center; padding: 80px; color: var(--text-muted);">
-        <div style="font-size: 36px; margin-bottom: 12px; animation: spin 1s linear infinite;">🔄</div>
-        Загрузка полной информации (все 16 полей, дорожки, субтитры)...
+      <div class="modal-skeleton-layout">
+        <div class="modal-skeleton-poster skeleton"></div>
+        <div class="modal-skeleton-body">
+          <div class="skeleton-line w-80 skeleton" style="height: 28px;"></div>
+          <div class="skeleton-line w-40 skeleton" style="height: 18px;"></div>
+          <div style="display: flex; gap: 8px; margin-top: 8px;">
+            <div class="skeleton-line skeleton" style="width: 70px; height: 24px; border-radius: 6px;"></div>
+            <div class="skeleton-line skeleton" style="width: 80px; height: 24px; border-radius: 6px;"></div>
+            <div class="skeleton-line skeleton" style="width: 60px; height: 24px; border-radius: 6px;"></div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 16px;">
+            <div class="skeleton-line w-100 skeleton"></div>
+            <div class="skeleton-line w-100 skeleton"></div>
+            <div class="skeleton-line w-80 skeleton"></div>
+            <div class="skeleton-line w-60 skeleton"></div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px;">
+            <div class="skeleton-line w-100 skeleton" style="height: 36px; border-radius: 6px;"></div>
+            <div class="skeleton-line w-100 skeleton" style="height: 36px; border-radius: 6px;"></div>
+          </div>
+        </div>
       </div>
     `;
 
