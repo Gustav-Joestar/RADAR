@@ -379,17 +379,11 @@ def run_server(port=PORT):
     log(f" RADAR Server запущен на http://127.0.0.1:{port}", "SUCCESS")
     log(f"============================================================", "SUCCESS")
     
-    # Auto-fix existing countries in background
+    # Auto-fix existing countries in background (instant local DB update)
     threading.Thread(target=tracker_engine.fix_existing_countries_in_db, daemon=True).start()
 
-    # Auto-fill missing ratings in background
-    threading.Thread(target=tracker_engine.backfill_missing_ratings, daemon=True).start()
-
-    # Disabled: web search enhancements (Bing) that can pull mismatched posters
-    # threading.Thread(target=tracker_engine.enhance_existing_movie_posters, daemon=True).start()
-
-    # Auto-cache remote posters locally to disk for 100% offline autonomy
-    threading.Thread(target=tracker_engine.download_missing_local_posters, daemon=True).start()
+    # Strict On-Demand: Background downloading of unviewed posters/ratings is disabled!
+    # Posters and ratings are loaded strictly for the 15 cards currently viewed on screen.
 
     # Watchdog monitor: stops server when browser closes
     threading.Thread(target=watchdog_monitor, daemon=True).start()

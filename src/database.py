@@ -17,16 +17,21 @@ CORE_GENRES = [
 ]
 DEFAULT_GENRES = CORE_GENRES
 
+def normalize_text(s):
+    if s is None:
+        return ""
+    return str(s).lower().replace('ё', 'е').replace('Ё', 'е').strip()
+
 def _py_lower(s):
     if s is None:
         return ""
-    return str(s).lower()
+    return str(s).lower().replace('ё', 'е').replace('Ё', 'е')
 
 def _py_like(pattern, value):
     if pattern is None or value is None:
         return False
-    pat = str(pattern).lower()
-    val = str(value).lower()
+    pat = str(pattern).lower().replace('ё', 'е').replace('Ё', 'е')
+    val = str(value).lower().replace('ё', 'е').replace('Ё', 'е')
     parts = []
     for ch in pat:
         if ch == '%':
@@ -38,11 +43,25 @@ def _py_like(pattern, value):
     regex = '^' + ''.join(parts) + '$'
     return bool(re.match(regex, val, re.DOTALL))
 
+def clean_dedup_key(title_ru, title_en, year):
+    # If English title is present, group primarily by normalized English title (eliminates 2017 vs 2018 differences)
+    en = re.sub(r'[^\w\s]', '', normalize_text(title_en))
+    if en and len(en) >= 3:
+        return f"en_{en}"
+    # Otherwise group by normalized Russian title without punctuation (e/ё normalized)
+    ru = re.sub(r'[^\w\s]', '', normalize_text(title_ru))
+    if ru and len(ru) >= 3:
+        return f"ru_{ru}"
+    raw = normalize_text(title_ru)
+    return f"raw_{raw}"
+
 def get_connection():
     conn = sqlite3.connect(DB_PATH, timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.create_function("lower", 1, _py_lower)
     conn.create_function("like", 2, _py_like)
+    conn.create_function("NORM", 1, normalize_text)
+    conn.create_function("DEDUP_KEY", 3, clean_dedup_key)
     return conn
 
 def init_db():
@@ -336,7 +355,7 @@ def query_releases(category="movies", min_rating=0.0, max_size=15.0,
         # Deduplicate by grouping movie title and year, prioritizing active user statuses, then picking release with highest seeds
         dedup_sql = f"""
         SELECT id, ROW_NUMBER() OVER (
-            PARTITION BY LOWER(TRIM(COALESCE(NULLIF(title_ru, ''), title))), year
+            PARTITION BY DEDUP_KEY(COALESCE(NULLIF(title_ru, ''), title), title_en, year)
             ORDER BY 
                 CASE 
                     WHEN user_status IN ('watchlist', 'ignored') THEN 0

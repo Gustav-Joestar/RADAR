@@ -42,7 +42,7 @@ def is_bad_poster(url):
         'radikal', 'rating', 's.rutor.info', 'imdb/pic', '.gif',
         'thumb', 'preview', '/t/', 'arrowup', 'arrowdown', 'smilies',
         'share', 'button', 'banner', 'logo', 'icon', 'ecx.images-amazon.com',
-        'cdnbunny.org', 'kinopoisk.ru/rating'
+        'cdnbunny.org', 'kinopoisk.ru/rating', 'flag', 'rus_flag', 'flag_'
     ]):
         return True
     if '/thumb/' in u or '/preview/' in u:
@@ -166,7 +166,7 @@ def download_image_bytes(poster_url):
 
     return None
 
-def cache_poster_locally(torrent_id, poster_url):
+def cache_poster_locally(torrent_id, poster_url, min_size_bytes=0):
     """Download remote poster and save to data/posters/<torrent_id>.jpg for complete offline autonomy."""
     if not poster_url or not torrent_id:
         return ""
@@ -176,20 +176,28 @@ def cache_poster_locally(torrent_id, poster_url):
     local_filename = f"{torrent_id}.jpg"
     local_file_path = os.path.join(database.POSTERS_DIR, local_filename)
 
-    # Check if already downloaded and is a VALID image (not an HTML error/landing page)
+    # Check if already downloaded and is a VALID image with sufficient size
     if os.path.exists(local_file_path):
         try:
-            with open(local_file_path, "rb") as f:
-                head = f.read(64)
-            if is_valid_image_bytes(head):
-                return f"/posters/{local_filename}"
-            else:
-                os.remove(local_file_path)
+            sz = os.path.getsize(local_file_path)
+            req_size = min_size_bytes if min_size_bytes > 0 else 10000
+            if sz >= req_size:
+                with open(local_file_path, "rb") as f:
+                    head = f.read(64)
+                if is_valid_image_bytes(head):
+                    return f"/posters/{local_filename}"
+            # If too small, invalid, or stub, remove it
+            os.remove(local_file_path)
         except Exception:
             pass
 
     img_data = download_image_bytes(poster_url)
     if img_data:
+        # Strict minimum size validation (reject icons, badges, flags, small banners)
+        if min_size_bytes > 0 and len(img_data) < min_size_bytes:
+            log(f"⚠️ [ПОСТЕР] #{torrent_id}: отклонён {poster_url[:60]}... (размер {round(len(img_data)/1024, 1)} KB < {round(min_size_bytes/1024, 1)} KB)", "DEBUG")
+            return ""
+
         try:
             with open(local_file_path, "wb") as f:
                 f.write(img_data)
@@ -420,13 +428,24 @@ def search_tracker_by_query(query, category_name="movies"):
     if not query or not query.strip():
         return 0
     clean_q = query.strip()
-    encoded_q = urllib.parse.quote(clean_q)
+    query_variants = [clean_q]
+    q_e = clean_q.replace('ё', 'е').replace('Ё', 'е')
+    q_yo = clean_q.replace('е', 'ё').replace('Е', 'Ё')
+    if q_e not in query_variants:
+        query_variants.append(q_e)
+    if q_yo not in query_variants:
+        query_variants.append(q_yo)
+
     cat_ids = CATEGORY_MAP.get(category_name, [1, 5, 7] if category_name == "movies" else [1])
     urls_to_scan = []
-    for cat_id in cat_ids:
-        urls_to_scan.append(f"http://rutor.info/search/0/{cat_id}/0/0/{encoded_q}")
+    for q_var in query_variants:
+        encoded_q = urllib.parse.quote(q_var)
+        for cat_id in cat_ids:
+            u = f"http://rutor.info/search/0/{cat_id}/0/0/{encoded_q}"
+            if u not in urls_to_scan:
+                urls_to_scan.append(u)
 
-    log(f"🔎 [ОНЛАЙН-ПОИСК] Запрос трекера по названию «{clean_q}» в [{category_name}]...", "INFO")
+    log(f"🔎 [ОНЛАЙН-ПОИСК] Запрос трекера по названию «{clean_q}» в [{category_name}] (вариантов: {len(query_variants)})...", "INFO")
     return _process_tracker_urls(urls_to_scan, category_name, 0)
 
 def _process_tracker_urls(urls_to_scan, category_name, year):
@@ -576,20 +595,6 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
         with ThreadPoolExecutor(max_workers=5) as executor:
             list(executor.map(parse_full_details, combined_needed))
         log(f"✅ [ПОСТЕРЫ] Витрина первой страницы полностью готова ({len(combined_needed)} обложек)!", "SUCCESS")
-
-    # Priority 2: Process remaining background releases lazily in background
-    remaining_to_fetch = [tid for tid in unique_titles_to_fetch if tid not in combined_needed]
-    if remaining_to_fetch:
-        import threading
-        def _fetch_remaining_lazily(items):
-            time.sleep(1.0)
-            for tid in items:
-                try:
-                    parse_full_details(tid)
-                    time.sleep(0.3)
-                except Exception:
-                    pass
-        threading.Thread(target=_fetch_remaining_lazily, args=(remaining_to_fetch,), daemon=True).start()
 
     log(f"Категория [{category_name}] полностью актуализирована!", "SUCCESS")
     return len(scanned_torrent_ids)
@@ -954,20 +959,28 @@ def parse_full_details(torrent_id):
             # Re-evaluate quality accurately using video_info resolution
             accurate_quality = extract_quality(update_data.get("title", ""), video_info)
 
-            # Find first working poster candidate and cache locally
             final_poster = ""
-            for cand in poster_candidates:
-                local_poster = cache_poster_locally(torrent_id, cand)
-                if local_poster and local_poster.startswith("/posters/"):
-                    final_poster = local_poster
-                    break
-
-            # If Rutor candidates didn't succeed, try Kinopoisk fallback if available
-            if not final_poster and kp_id:
-                kp_url = f"https://st.kp.yandex.net/images/film_iphone/iphone360_{kp_id}.jpg"
-                local_kp = cache_poster_locally(torrent_id, kp_url)
+            # Priority 1: Official HD Kinopoisk poster directly from CDN (guaranteed clean, official, no flags/ads)
+            if kp_id:
+                # 1. High-resolution film_big (typically 80-200 KB)
+                kp_big_url = f"https://st.kp.yandex.net/images/film_big/{kp_id}.jpg"
+                local_kp = cache_poster_locally(torrent_id, kp_big_url, min_size_bytes=30000)
                 if local_kp and local_kp.startswith("/posters/"):
                     final_poster = local_kp
+                else:
+                    # 2. Medium-resolution iphone360 fallback
+                    kp_iphone_url = f"https://st.kp.yandex.net/images/film_iphone/iphone360_{kp_id}.jpg"
+                    local_kp = cache_poster_locally(torrent_id, kp_iphone_url, min_size_bytes=10000)
+                    if local_kp and local_kp.startswith("/posters/"):
+                        final_poster = local_kp
+
+            # Priority 2: Rutor tracker candidates (strictly filtered: min 50 KB, vertical, no icons/flags)
+            if not final_poster:
+                for cand in poster_candidates:
+                    local_poster = cache_poster_locally(torrent_id, cand, min_size_bytes=51200)
+                    if local_poster and local_poster.startswith("/posters/"):
+                        final_poster = local_poster
+                        break
 
             update_data.update({
                 "quality": accurate_quality,
