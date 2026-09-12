@@ -109,6 +109,63 @@ def fetch_web_poster(title_ru, year=0, original_title=""):
         log(f"⚠️ Ошибка поиска веб-постера для «{title_ru}»: {e}", "DEBUG")
     return ""
 
+def is_valid_image_bytes(data):
+    """Check if byte buffer has valid image magic bytes (JPEG, PNG, WEBP, GIF)."""
+    if not data or len(data) < 512:
+        return False
+    if data.startswith(b'\xff\xd8\xff'):
+        return True
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return True
+    if data.startswith(b'RIFF') and b'WEBP' in data[:16]:
+        return True
+    if data.startswith(b'GIF8'):
+        return True
+    return False
+
+def download_image_bytes(poster_url):
+    """Download image, unwrapping anti-hotlinking viewer pages (FastPic etc.) into direct signed image bytes."""
+    if not poster_url or not poster_url.startswith(('http://', 'https://')):
+        return None
+
+    ref = "https://fastpic.org/" if "fastpic" in poster_url else "http://rutor.info/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": ref
+    }
+
+    try:
+        r = requests.get(poster_url, headers=headers, impersonate="chrome124", timeout=8)
+        if r.status_code == 200:
+            if is_valid_image_bytes(r.content):
+                return r.content
+
+            # FastPic or image host returned an HTML landing/viewer page instead of direct image
+            if b'<html' in r.content[:300].lower() or b'<!doctype' in r.content[:300].lower():
+                soup = BeautifulSoup(r.text, 'html.parser')
+                signed_candidates = []
+                for im in soup.select('img'):
+                    src = im.get('src', '')
+                    if not src:
+                        continue
+                    if src.startswith('//'):
+                        src = 'https:' + src
+                    # FastPic signed image contains ?md5=
+                    if '?md5=' in src or im.get('id') == 'image':
+                        signed_candidates.insert(0, src)
+                    elif any(c in im.get('class', []) for c in ['image', 'img-fluid']) and src.startswith('http'):
+                        signed_candidates.append(src)
+
+                for cand_url in signed_candidates:
+                    r2 = requests.get(cand_url, headers={"User-Agent": headers["User-Agent"], "Referer": "https://fastpic.org/"}, impersonate="chrome124", timeout=8)
+                    if r2.status_code == 200 and is_valid_image_bytes(r2.content):
+                        return r2.content
+
+    except Exception as e:
+        log(f"⚠️ Ошибка загрузки изображения {poster_url[:80]}: {e}", "DEBUG")
+
+    return None
+
 def cache_poster_locally(torrent_id, poster_url):
     """Download remote poster and save to data/posters/<torrent_id>.jpg for complete offline autonomy."""
     if not poster_url or not torrent_id:
@@ -119,25 +176,29 @@ def cache_poster_locally(torrent_id, poster_url):
     local_filename = f"{torrent_id}.jpg"
     local_file_path = os.path.join(database.POSTERS_DIR, local_filename)
 
-    # If already downloaded and valid, return local URL
-    if os.path.exists(local_file_path) and os.path.getsize(local_file_path) > 1024:
-        return f"/posters/{local_filename}"
+    # Check if already downloaded and is a VALID image (not an HTML error/landing page)
+    if os.path.exists(local_file_path):
+        try:
+            with open(local_file_path, "rb") as f:
+                head = f.read(64)
+            if is_valid_image_bytes(head):
+                return f"/posters/{local_filename}"
+            else:
+                os.remove(local_file_path)
+        except Exception:
+            pass
 
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Referer": "https://www.google.com/"
-        }
-        r = requests.get(poster_url, headers=headers, impersonate="chrome124", timeout=6)
-        if r.status_code == 200 and len(r.content) > 1024:
+    img_data = download_image_bytes(poster_url)
+    if img_data:
+        try:
             with open(local_file_path, "wb") as f:
-                f.write(r.content)
-            log(f"💾 [ОФЛАЙН-КЭШ] Обложка сохранена локально: /posters/{local_filename} ({round(len(r.content)/1024, 1)} KB)", "DEBUG")
+                f.write(img_data)
+            log(f"💾 [ОФЛАЙН-КЭШ] Обложка #{torrent_id} сохранена: /posters/{local_filename} ({round(len(img_data)/1024, 1)} KB)", "DEBUG")
             return f"/posters/{local_filename}"
-    except Exception as e:
-        log(f"⚠️ Не удалось локально сохранить постер #{torrent_id}: {e}", "DEBUG")
+        except Exception as e:
+            log(f"⚠️ Ошибка записи файла обложки #{torrent_id}: {e}", "DEBUG")
 
-    return poster_url
+    return ""
 
 GENRE_KEYWORDS = {
     "Боевик": ["боевик", "action"],
@@ -547,9 +608,8 @@ def parse_full_details(torrent_id):
         magnet_a = details_table.select_one('a[href^="magnet:"]')
         magnet_url = magnet_a['href'] if magnet_a else ""
 
-        poster_url = ""
-        # Choose poster from torrent detail page:
-        # On Rutor, the official cover is always placed on the right (float:right or align="right")
+        # Collect poster candidates with right-aligned / right-floated priority
+        poster_candidates = []
         for img in details_table.select('img'):
             src = img.get('src', '')
             if not src:
@@ -564,24 +624,11 @@ def parse_full_details(torrent_id):
             p_style = (img.parent.get('style') or '').lower().replace(' ', '') if img.parent else ''
             p_align = (img.parent.get('align') or '').lower().strip() if img.parent else ''
 
-            if 'float:right' in style or align == 'right' or 'float:right' in p_style or p_align == 'right':
-                poster_url = src
-                log(f"🖼️ [ПОСТЕР] #{torrent_id} найдена обложка справа (float:right): {poster_url[:80]}...", "DEBUG")
-                break
-
-        # Priority 2: first clean image in details_table
-        if not poster_url:
-            for img in details_table.select('img'):
-                src = img.get('src', '')
-                if not src:
-                    continue
-                if src.startswith('//'):
-                    src = 'https:' + src
-                if is_bad_poster(src):
-                    continue
-                poster_url = src
-                log(f"🖼️ [ПОСТЕР] #{torrent_id} взята первая подходящая картинка: {poster_url[:80]}...", "DEBUG")
-                break
+            is_right = 'float:right' in style or align == 'right' or 'float:right' in p_style or p_align == 'right'
+            if is_right:
+                poster_candidates.insert(0, src)
+            else:
+                poster_candidates.append(src)
 
         full_text = details_table.text
 
@@ -736,13 +783,21 @@ def parse_full_details(torrent_id):
             # Re-evaluate quality accurately using video_info resolution
             accurate_quality = extract_quality(update_data.get("title", ""), video_info)
 
-            # Use poster directly from torrent page without size checks
-            final_poster = poster_url
-            # Auto-cache poster locally for complete offline autonomy
-            if final_poster and final_poster.startswith("http"):
-                local_poster = cache_poster_locally(torrent_id, final_poster)
-                if local_poster:
+            # Find first working poster candidate and cache locally
+            final_poster = ""
+            for cand in poster_candidates:
+                local_poster = cache_poster_locally(torrent_id, cand)
+                if local_poster and local_poster.startswith("/posters/"):
                     final_poster = local_poster
+                    break
+
+            # If Rutor candidates didn't succeed, try Kinopoisk fallback if available
+            if not final_poster and kp_m:
+                kp_id = kp_m.group(1)
+                kp_url = f"https://st.kp.yandex.net/images/film_iphone/iphone360_{kp_id}.jpg"
+                local_kp = cache_poster_locally(torrent_id, kp_url)
+                if local_kp and local_kp.startswith("/posters/"):
+                    final_poster = local_kp
 
             update_data.update({
                 "quality": accurate_quality,
