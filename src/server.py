@@ -382,6 +382,9 @@ def run_server(port=PORT):
     # Auto-fix existing countries in background
     threading.Thread(target=tracker_engine.fix_existing_countries_in_db, daemon=True).start()
 
+    # Auto-fill missing ratings in background
+    threading.Thread(target=tracker_engine.backfill_missing_ratings, daemon=True).start()
+
     # Disabled: web search enhancements (Bing) that can pull mismatched posters
     # threading.Thread(target=tracker_engine.enhance_existing_movie_posters, daemon=True).start()
 

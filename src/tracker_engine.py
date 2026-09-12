@@ -608,30 +608,39 @@ GENRES_DICTIONARY = [
     'мюзикл', 'спорт'
 ]
 
+RATINGS_SEARCH_CACHE = {}
+
 def fetch_ratings_by_search(title_ru, title_en="", year=0):
-    """Search Kinopoisk ID and XML ratings by title + year via DuckDuckGo."""
+    """Search Kinopoisk ID and XML ratings by title + year via Yahoo and DuckDuckGo."""
+    cache_key = (title_ru.lower().strip() if title_ru else "", year or 0)
+    if cache_key in RATINGS_SEARCH_CACHE:
+        return RATINGS_SEARCH_CACHE[cache_key]
+
     kp_rating = 0.0
     imdb_rating = 0.0
     kp_id = None
 
     queries = []
     if title_ru and year:
-        queries.append(f"кинопоиск фильм {title_ru} {year}")
-    elif title_ru:
+        queries.append(f"кинопоиск {title_ru} {year}")
+    if title_ru:
         queries.append(f"кинопоиск {title_ru}")
-    if title_en and year:
+    if title_en and year and title_en.lower() != title_ru.lower():
         queries.append(f"kinopoisk {title_en} {year}")
-    elif title_en:
+    if title_en and title_en.lower() != title_ru.lower():
         queries.append(f"kinopoisk {title_en}")
 
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
     for q in queries:
+        # 1. Primary engine: Yahoo Search (fast, reliable, no rate-limiting)
         try:
-            url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(q)}"
-            r = requests.get(url, impersonate='chrome124', timeout=5)
-            m = re.search(r'kinopoisk\.ru/film/(\d+)', r.text)
-            if m:
-                cand_id = m.group(1)
-                r_xml = requests.get(f"https://rating.kinopoisk.ru/{cand_id}.xml", timeout=4)
+            url_yahoo = f"https://search.yahoo.com/search?p={urllib.parse.quote(q)}"
+            r_yahoo = requests.get(url_yahoo, impersonate='chrome124', timeout=3, headers=headers)
+            matches = re.findall(r'kinopoisk\.ru/film/(\d+)', r_yahoo.text)
+            if matches:
+                cand_id = matches[0]
+                r_xml = requests.get(f"https://rating.kinopoisk.ru/{cand_id}.xml", timeout=3)
                 if r_xml.status_code == 200:
                     km = re.search(r'<kp_rating[^>]*>([\d\.]+)</kp_rating>', r_xml.text)
                     im = re.search(r'<imdb_rating[^>]*>([\d\.]+)</imdb_rating>', r_xml.text)
@@ -645,7 +654,78 @@ def fetch_ratings_by_search(title_ru, title_en="", year=0):
         except Exception:
             pass
 
-    return kp_rating, imdb_rating, kp_id
+        if kp_rating > 0 or imdb_rating > 0:
+            break
+
+        # 2. Secondary engine: DuckDuckGo
+        try:
+            url_ddg = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(q)}"
+            r_ddg = requests.get(url_ddg, impersonate='chrome124', timeout=3)
+            m = re.search(r'kinopoisk\.ru/film/(\d+)', r_ddg.text)
+            if m:
+                cand_id = m.group(1)
+                r_xml = requests.get(f"https://rating.kinopoisk.ru/{cand_id}.xml", timeout=3)
+                if r_xml.status_code == 200:
+                    km = re.search(r'<kp_rating[^>]*>([\d\.]+)</kp_rating>', r_xml.text)
+                    im = re.search(r'<imdb_rating[^>]*>([\d\.]+)</imdb_rating>', r_xml.text)
+                    if km and float(km.group(1)) > 0:
+                        kp_rating = round(float(km.group(1)), 1)
+                    if im and float(im.group(1)) > 0:
+                        imdb_rating = round(float(im.group(1)), 1)
+                    kp_id = cand_id
+                    if kp_rating > 0 or imdb_rating > 0:
+                        break
+        except Exception:
+            pass
+
+        if kp_rating > 0 or imdb_rating > 0:
+            break
+
+    result = (kp_rating, imdb_rating, kp_id)
+    if kp_rating > 0 or imdb_rating > 0:
+        RATINGS_SEARCH_CACHE[cache_key] = result
+    return result
+
+def backfill_missing_ratings(limit=30):
+    """Background worker that finds movies in DB with 0 ratings and looks them up."""
+    try:
+        conn = database.get_connection()
+        c = conn.cursor()
+        c.execute("""
+            SELECT torrent_id, title_ru, title_en, year 
+            FROM releases 
+            WHERE category in ('movies', 'series') 
+              AND kp_rating = 0.0 AND imdb_rating = 0.0
+            ORDER BY date_ts DESC 
+            LIMIT ?
+        """, (limit,))
+        missing = [dict(r) for r in c.fetchall()]
+        conn.close()
+
+        if not missing:
+            return
+
+        for item in missing:
+            try:
+                kp, imdb, kp_id = fetch_ratings_by_search(
+                    item.get("title_ru"), item.get("title_en"), item.get("year")
+                )
+                if kp > 0 or imdb > 0:
+                    conn2 = database.get_connection()
+                    c2 = conn2.cursor()
+                    c2.execute("""
+                        UPDATE releases 
+                        SET kp_rating = ?, imdb_rating = ? 
+                        WHERE torrent_id = ?
+                    """, (kp, imdb, item["torrent_id"]))
+                    conn2.commit()
+                    conn2.close()
+                    log(f"⭐ [РЕЙТИНГИ] #{item['torrent_id']} «{item.get('title_ru')[:30]}»: КП {kp or '—'} / IMDb {imdb or '—'}", "SUCCESS")
+                time.sleep(0.4)
+            except Exception:
+                pass
+    except Exception as e:
+        log(f"⚠️ Ошибка backfill_missing_ratings: {e}", "WARNING")
 
 def parse_full_details(torrent_id):
     url = f"http://rutor.info/torrent/{torrent_id}"
