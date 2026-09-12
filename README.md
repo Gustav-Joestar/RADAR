@@ -5,7 +5,11 @@
   <p><b>Забудь про тонны спама, рекламы и бесконечные страницы трекеров.</b></p>
   <p>Красивая витрина новинок в одном окне — чисто, быстро и прямо на твоём компьютере.</p>
   <br>
-  <img src="static/preview.png" alt="Главный экран RADAR" width="900" style="border-radius: 10px; max-width: 100%;" />
+  <img src="static/preview.png" alt="Главная витрина RADAR" width="900" style="border-radius: 10px; max-width: 100%;" />
+  <p><i>Главная витрина: кинематографичные постеры, оценки Кинопоиск/IMDb и мгновенные фильтры</i></p>
+  <br>
+  <img src="static/preview_modal.png" alt="Карточка открытого фильма в RADAR" width="900" style="border-radius: 10px; max-width: 100%;" />
+  <p><i>Карточка релиза: сюжет, полный список озвучек и аудиодорожек, субтитры и скачивание в 1 клик</i></p>
 </div>
 
 ---
