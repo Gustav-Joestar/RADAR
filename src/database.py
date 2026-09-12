@@ -680,6 +680,44 @@ def get_distinct_years(category="movies"):
     years.append("< 2000")
     return years
 
+def update_release_poster(torrent_id, poster_url):
+    """Update poster_url for a release in releases and watchlist_releases tables."""
+    if not torrent_id or not poster_url:
+        return
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE releases SET poster_url = ? WHERE torrent_id = ?", (poster_url, str(torrent_id)))
+    c.execute("UPDATE watchlist_releases SET poster_url = ? WHERE torrent_id = ?", (poster_url, str(torrent_id)))
+    conn.commit()
+    conn.close()
+
+def sync_watchlist_to_releases():
+    """Ensure all releases in watchlist_releases permanently exist in releases with user_status = 'watchlist'"""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM watchlist_releases")
+    rows = [dict(r) for r in c.fetchall()]
+    now = int(time.time())
+    for r in rows:
+        tid = r['torrent_id']
+        c.execute("SELECT 1 FROM releases WHERE torrent_id = ?", (tid,))
+        if not c.fetchone():
+            c.execute("""
+                INSERT INTO releases (
+                    torrent_id, category, title, title_ru, title_en, year, genre,
+                    kp_rating, imdb_rating, poster_url, user_status, updated_at, date_ts
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'watchlist', ?, ?)
+            """, (
+                tid, r.get('category', 'movies'), r.get('title', ''), r.get('title_ru', ''),
+                r.get('title_en', ''), r.get('year', 0), r.get('genre', ''),
+                r.get('kp_rating', 0.0), r.get('imdb_rating', 0.0), r.get('poster_url', ''),
+                now, r.get('created_at', now)
+            ))
+        else:
+            c.execute("UPDATE releases SET user_status = 'watchlist', updated_at = ? WHERE torrent_id = ?", (now, tid))
+    conn.commit()
+    conn.close()
+
 def sync_ignored_to_releases():
     """Ensure any releases in ignored_releases also exist in releases with user_status = 'ignored'"""
     conn = get_connection()
@@ -707,4 +745,5 @@ def sync_ignored_to_releases():
     conn.close()
 
 init_db()
+sync_watchlist_to_releases()
 sync_ignored_to_releases()

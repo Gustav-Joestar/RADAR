@@ -15,11 +15,11 @@ MONTHS = {
 }
 
 CATEGORY_MAP = {
-    "movies": [1, 5],     # Зарубежные фильмы, Наши фильмы
-    "series": [4, 16],    # Зарубежные сериалы, Наши сериалы
-    "anime": [10, 7],     # Аниме, Мультипликация
-    "games": [8],         # Игры
-    "software": [9]       # Программы
+    "movies": [1, 5, 7],     # 1=Зарубежные фильмы, 5=Наши фильмы, 7=Мультипликация
+    "series": [4, 6, 16],    # 4=Зарубежные сериалы, 6=Телевизор, 16=Наши сериалы
+    "anime": [10, 7],        # 10=Аниме, 7=Мультипликация
+    "games": [8],            # 8=Игры
+    "software": [9, 12]      # 9, 12=Программы
 }
 
 CATEGORY_HUBS = {
@@ -29,6 +29,67 @@ CATEGORY_HUBS = {
     "games": ["http://rutor.info/games"],
     "software": ["http://rutor.info/soft"]
 }
+
+def is_bad_poster(url):
+    """Check if poster URL is empty, broken, low-res thumbnail, or rating badge."""
+    if not url or not isinstance(url, str):
+        return True
+    u = url.lower().strip()
+    if not u.startswith(('http://', 'https://')):
+        return True
+    if any(bad in u for bad in [
+        'radikal', 'rating', 's.rutor.info/imdb', 'imdb/pic', '.gif',
+        'thumb', 'preview', 'arrowup', 'arrowdown', 'smilies',
+        'share', 'button', 'banner', 'logo', 'icon', 'ecx.images-amazon.com'
+    ]):
+        return True
+    if '/thumb/' in u or '/preview/' in u or '/t/' in u:
+        return True
+    return False
+
+def fetch_web_poster(title_ru, year=0, original_title=""):
+    if not title_ru or not title_ru.strip():
+        return ""
+    q_parts = [title_ru.strip()]
+    if original_title and original_title.lower() != title_ru.lower():
+        q_parts.append(original_title.strip())
+    if year and int(year) > 0:
+        q_parts.append(str(year))
+    q_parts.append("постер фильм")
+
+    query = " ".join(q_parts)
+    q_enc = urllib.parse.quote(query)
+    url = f"https://www.bing.com/images/search?q={q_enc}&form=HDRSC2"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
+    }
+    try:
+        r = requests.get(url, headers=headers, impersonate='chrome124', timeout=5)
+        html = r.text
+        murls = re.findall(r'murl&quot;:&quot;(https?://[^&]+)&quot;', html)
+        if not murls:
+            murls = re.findall(r'"murl":"(https?://[^"]+)"', html)
+
+        # Priority 1: High quality official cinema sites
+        priority_domains = ['avatars.mds.yandex.net', 'kinopoisk', 'kinorium', 'kinonews', 'film.ru', 'wikimedia.org', 'lostfilm']
+        for domain in priority_domains:
+            for u in murls:
+                if domain in u.lower() and not any(bad in u.lower() for bad in ['logo', 'icon', 'trailer', 'avatar', 'shot']):
+                    return u
+
+        # Priority 2: Any clean image URL with jpg/png/webp
+        for u in murls:
+            u_clean = u.split('?')[0].lower()
+            if any(u_clean.endswith(ext) for ext in ('.jpg', '.jpeg', '.png', '.webp')):
+                if not any(bad in u.lower() for bad in ['logo', 'icon', 'banner', 'avatar', 'screenshot']):
+                    return u
+
+        if murls:
+            return murls[0]
+    except Exception as e:
+        log(f"⚠️ Ошибка поиска веб-постера для «{title_ru}»: {e}", "DEBUG")
+    return ""
 
 GENRE_KEYWORDS = {
     "Боевик": ["боевик", "action"],
@@ -251,14 +312,12 @@ def search_tracker_by_query(query, category_name="movies"):
         return 0
     clean_q = query.strip()
     encoded_q = urllib.parse.quote(clean_q)
-    cat_ids = CATEGORY_MAP.get(category_name, [1, 5] if category_name == "movies" else [1])
+    cat_ids = CATEGORY_MAP.get(category_name, [1, 5, 7] if category_name == "movies" else [1])
     urls_to_scan = []
     for cat_id in cat_ids:
         urls_to_scan.append(f"http://rutor.info/search/0/{cat_id}/0/0/{encoded_q}")
-    if 0 not in cat_ids:
-        urls_to_scan.append(f"http://rutor.info/search/0/0/0/0/{encoded_q}")
 
-    log(f"🔎 [ОНЛАЙН-ПОИСК] Запрос трекера по названию «{clean_q}»...", "INFO")
+    log(f"🔎 [ОНЛАЙН-ПОИСК] Запрос трекера по названию «{clean_q}» в [{category_name}]...", "INFO")
     return _process_tracker_urls(urls_to_scan, category_name, 0)
 
 def _process_tracker_urls(urls_to_scan, category_name, year):
@@ -290,6 +349,18 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     continue
 
                 raw_title = t_link.text.strip()
+
+                # Check for category isolation to strictly prevent games, software, audio, books from leaking into movies/series
+                row_links_str = " ".join([a.get('href', '') for a in tr.select('a')])
+                is_game_row = any(g in row_links_str for g in ['/games', '/browse/0/8', '/search/0/8'])
+                is_soft_row = any(s in row_links_str for s in ['/soft', '/browse/0/9', '/browse/0/12', '/search/0/9', '/search/0/12'])
+                is_other_row = any(o in row_links_str for o in ['/books', '/audio', '/browse/0/2', '/browse/0/11', '/browse/0/13', '/browse/0/14'])
+                t_lower = raw_title.lower()
+                has_non_film_cues = bool(re.search(r'\b(?:repack(?:\s+by|\s+от)?|gog|steam\s*rip|dlc\s*pack|portable|комикс|аудиокнига|журнал|книга|mp3|flac)\b', t_lower))
+
+                if category_name in ("movies", "series"):
+                    if is_game_row or is_soft_row or is_other_row or has_non_film_cues:
+                        continue
 
                 tds = tr.find_all('td')
                 date_str = tds[0].text.strip() if len(tds) > 0 else ''
@@ -416,22 +487,20 @@ def parse_full_details(torrent_id):
                 continue
             if src.startswith('//'):
                 src = 'https:' + src
-            # Explicitly exclude dead radikal.ru domain
-            if 'radikal' in src.lower():
+            if is_bad_poster(src):
                 continue
-            if any(k in src.lower() for k in ['fastpic', 'postimg', 'imageban', 'lostpix', 'ibn.im', 'firepic', 'media', 'poster', 'images', 'pictures', 'photobank', 'hostingkartinok', 'imgur', 'kinopoisk', 'kinomania', 'pic']):
+            if any(k in src.lower() for k in ['fastpic', 'postimg', 'imageban', 'lostpix', 'ibn.im', 'firepic', 'media', 'poster', 'images', 'pictures', 'photobank', 'hostingkartinok', 'imgur', 'kinopoisk', 'kinomania']):
                 poster_url = src
                 break
         if not poster_url:
             for img in details_table.select('img'):
                 src = img.get('src', '')
-                if not src or 'radikal' in src.lower():
+                if not src or is_bad_poster(src):
                     continue
                 if src.startswith('//'):
                     src = 'https:' + src
-                if not any(icon in src.lower() for icon in ['d.gif', 'm.png', 'com.gif', 'arrowup.gif', 'arrowdown.gif', 'smilies', 'share', 'button']):
-                    poster_url = src
-                    break
+                poster_url = src
+                break
 
         full_text = details_table.text
 
@@ -527,9 +596,22 @@ def parse_full_details(torrent_id):
             # Re-evaluate quality accurately using video_info resolution
             accurate_quality = extract_quality(update_data.get("title", ""), video_info)
 
+            # High quality poster selection: check if parsed is bad, fallback to existing or web poster
+            final_poster = poster_url
+            if is_bad_poster(final_poster):
+                existing_poster = update_data.get("poster_url", "")
+                if not is_bad_poster(existing_poster):
+                    final_poster = existing_poster
+                elif update_data.get("category") in ("movies", "series", "anime"):
+                    final_poster = fetch_web_poster(
+                        update_data.get("title_ru", ""),
+                        update_data.get("year", 0),
+                        update_data.get("title_en", "")
+                    )
+
             update_data.update({
                 "quality": accurate_quality,
-                "poster_url": poster_url or update_data.get("poster_url", ""),
+                "poster_url": final_poster or "",
                 "magnet_url": magnet_url or update_data.get("magnet_url", ""),
                 "genre": genre or update_data.get("genre", ""),
                 "director": director or update_data.get("director", ""),
@@ -556,3 +638,49 @@ def parse_full_details(torrent_id):
     except Exception as e:
         log(f"⚠️ Ошибка парсинга #{torrent_id}: {e}", "WARNING")
         return None
+
+def enhance_existing_movie_posters(limit=100):
+    """Scan movies in DB with missing or bad posters and upgrade them with clean web posters."""
+    try:
+        conn = database.get_connection()
+        c = conn.cursor()
+        c.execute("""
+            SELECT torrent_id, title_ru, year, title_en, poster_url 
+            FROM releases 
+            WHERE category = 'movies'
+            ORDER BY 
+                CASE WHEN user_status = 'watchlist' THEN 0 ELSE 1 END,
+                date_ts DESC
+        """)
+        rows = [dict(r) for r in c.fetchall()]
+        conn.close()
+
+        to_fix = []
+        for r in rows:
+            if is_bad_poster(r.get('poster_url')):
+                to_fix.append(r)
+            if len(to_fix) >= limit:
+                break
+
+        if not to_fix:
+            return 0
+
+        log(f"🎨 [ОБЛОЖКИ] Улучшение качества постеров для {len(to_fix)} фильмов...", "INFO")
+        fixed_count = 0
+        for item in to_fix:
+            tid = item['torrent_id']
+            t_ru = item.get('title_ru') or ''
+            yr = item.get('year') or 0
+            t_en = item.get('title_en') or ''
+            new_poster = fetch_web_poster(t_ru, yr, t_en)
+            if new_poster and not is_bad_poster(new_poster):
+                database.update_release_poster(tid, new_poster)
+                fixed_count += 1
+                log(f"✨ [ОБЛОЖКА] #{tid} «{t_ru}» обновлен постер: {new_poster[:60]}...", "DEBUG")
+
+        if fixed_count > 0:
+            log(f"✅ [ОБЛОЖКИ] Успешно обновлено постеров: {fixed_count}", "SUCCESS")
+        return fixed_count
+    except Exception as e:
+        log(f"⚠️ Ошибка улучшения постеров: {e}", "WARNING")
+        return 0

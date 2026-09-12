@@ -111,6 +111,8 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/browser_closing":
             schedule_shutdown(3.5)
             self.send_json({"status": "closing"})
+        elif path == "/api/poster_search":
+            self.handle_api_poster_search(params)
         else:
             self.send_error(404, "Not Found")
 
@@ -284,10 +286,17 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
 
         self.send_json(item)
 
-    def handle_api_genres(self, params):
-        category = params.get("category", ["movies"])[0]
-        genres = database.get_distinct_genres(category)
-        self.send_json({"genres": genres})
+    def handle_api_poster_search(self, params):
+        title = params.get("title", [""])[0]
+        year_str = params.get("year", ["0"])[0]
+        year = int(year_str) if str(year_str).isdigit() else 0
+        original_title = params.get("original_title", [""])[0]
+        torrent_id = params.get("torrent_id", [""])[0]
+
+        poster_url = tracker_engine.fetch_web_poster(title, year, original_title)
+        if poster_url and torrent_id:
+            database.update_release_poster(torrent_id, poster_url)
+        self.send_json({"poster_url": poster_url or ""})
 
     def serve_file(self, full_path, content_type):
         if not os.path.exists(full_path):
@@ -331,6 +340,9 @@ def run_server(port=PORT):
     
     # Auto-fix existing countries in background
     threading.Thread(target=tracker_engine.fix_existing_countries_in_db, daemon=True).start()
+
+    # Auto-enhance missing / low-res movie posters in background
+    threading.Thread(target=tracker_engine.enhance_existing_movie_posters, daemon=True).start()
 
     # Watchdog monitor: stops server when browser closes
     threading.Thread(target=watchdog_monitor, daemon=True).start()

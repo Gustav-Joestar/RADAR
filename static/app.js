@@ -533,9 +533,12 @@ document.addEventListener('DOMContentLoaded', () => {
       card.dataset.titleRu = (item.title_ru || '').trim().toLowerCase();
       card.onclick = () => openModal(item.torrent_id);
 
+      const escapedTitle = (item.title_ru || '').replace(/'/g, "\\'");
+      const escapedEn = (item.title_en || '').replace(/'/g, "\\'");
+
       const posterHtml = item.poster_url 
-        ? `<img class="poster-img" src="${item.poster_url}" alt="${item.title_ru}" loading="lazy" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';"/><div class="poster-placeholder" style="display:none;">🎬</div>`
-        : `<div class="poster-placeholder" style="animation: pulse 1.5s infinite;">⏳ Подгрузка обложки...</div>`;
+        ? `<img class="poster-img" src="${item.poster_url}" alt="${item.title_ru}" loading="lazy" onerror="this.onerror=null; repairPoster(this, '${item.torrent_id}', '${escapedTitle}', ${item.year || 0}, '${escapedEn}');"/><div class="poster-placeholder" style="display:none;">🎬</div>`
+        : `<div class="poster-placeholder" id="placeholder-${item.torrent_id}" style="animation: pulse 1.5s infinite;" data-repair-tid="${item.torrent_id}" data-repair-title="${escapedTitle}" data-repair-year="${item.year || 0}" data-repair-en="${escapedEn}">⏳ Подгрузка обложки...</div>`;
 
       let ratingBadges = '';
       if (item.kp_rating > 0) {
@@ -553,7 +556,6 @@ document.addEventListener('DOMContentLoaded', () => {
         statusBadgeHtml = `<div class="card-status-badge badge-status-ignored">🚫 В списке «Не буду смотреть»</div>`;
       }
 
-      const escapedTitle = (item.title_ru || '').replace(/'/g, "\\'");
       let hoverActionsHtml = '';
       if (isWatchlist || item.user_status === 'watchlist' || item.user_status === 'watchlist_alt') {
         hoverActionsHtml = `
@@ -608,7 +610,80 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
       cardsGrid.appendChild(card);
     });
+
+    // Auto-heal any placeholder posters in current view
+    document.querySelectorAll('.poster-placeholder[data-repair-tid]').forEach(ph => {
+      const tid = ph.getAttribute('data-repair-tid');
+      const tRu = ph.getAttribute('data-repair-title');
+      const yr = ph.getAttribute('data-repair-year');
+      const tEn = ph.getAttribute('data-repair-en');
+      if (tid && tRu && !repairingPosters.has(tid)) {
+        repairingPosters.add(tid);
+        const p = new URLSearchParams({
+          title: tRu,
+          year: yr || 0,
+          original_title: tEn || '',
+          torrent_id: tid
+        });
+        fetch(`/api/poster_search?${p.toString()}`)
+          .then(res => res.json())
+          .then(data => {
+            if (data && data.poster_url) {
+              const card = document.getElementById(`card-${tid}`);
+              if (card) {
+                const wrap = card.querySelector('.poster-wrap');
+                const targetPh = card.querySelector('.poster-placeholder');
+                if (wrap && targetPh) {
+                  const img = document.createElement('img');
+                  img.className = 'poster-img';
+                  img.src = data.poster_url;
+                  img.alt = tRu;
+                  img.loading = 'lazy';
+                  targetPh.replaceWith(img);
+                }
+              }
+            }
+          })
+          .catch(() => {})
+          .finally(() => {
+            setTimeout(() => repairingPosters.delete(tid), 3000);
+          });
+      }
+    });
   }
+
+  const repairingPosters = new Set();
+  window.repairPoster = function(imgElem, torrentId, titleRu, year, titleEn) {
+    const nextElem = imgElem ? imgElem.nextElementSibling : null;
+    if (nextElem) nextElem.style.display = 'flex';
+    if (imgElem) imgElem.style.display = 'none';
+
+    if (!titleRu || repairingPosters.has(torrentId)) return;
+    repairingPosters.add(torrentId);
+
+    const p = new URLSearchParams({
+      title: titleRu,
+      year: year || 0,
+      original_title: titleEn || '',
+      torrent_id: torrentId || ''
+    });
+
+    fetch(`/api/poster_search?${p.toString()}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.poster_url) {
+          if (imgElem) {
+            imgElem.src = data.poster_url;
+            imgElem.style.display = 'block';
+            if (nextElem) nextElem.style.display = 'none';
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        setTimeout(() => repairingPosters.delete(torrentId), 3000);
+      });
+  };
 
   function renderIgnoredTable(items) {
     if (!ignoredTableBody) return;
@@ -790,7 +865,7 @@ document.addEventListener('DOMContentLoaded', () => {
     modalContent.innerHTML = `
       <div class="modal-left">
         ${item.poster_url 
-          ? `<img class="modal-poster" src="${item.poster_url}" alt="Постер" onerror="this.style.display='none'"/>` 
+          ? `<img class="modal-poster" src="${item.poster_url}" alt="Постер" onerror="this.onerror=null; repairPoster(this, '${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\'")}', ${item.year || 0}, '${(item.title_en || '').replace(/'/g, "\\'")}');"/>` 
           : '<div class="poster-placeholder" style="border-radius:12px; height: 380px;">🎬</div>'}
         
         <!-- Modal Quick Actions -->
