@@ -267,6 +267,29 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
                 deduplicate=True, origin=origin
             )
 
+        # If in movies/series discovery feed and we have fewer than limit rated releases, resolve more from DB
+        if category in ("movies", "series") and page == 1 and not search and len(data["items"]) < limit:
+            conn = database.get_connection()
+            c = conn.cursor()
+            c.execute("""
+                SELECT torrent_id FROM releases 
+                WHERE category = ? AND kp_rating = 0.0 AND imdb_rating = 0.0
+                  AND (description IS NULL OR description = '')
+                ORDER BY date_ts DESC LIMIT ?
+            """, (category, 10))
+            unparsed = [r["torrent_id"] for r in c.fetchall()]
+            conn.close()
+            if unparsed:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    list(executor.map(tracker_engine.parse_full_details, unparsed))
+                data = database.query_releases(
+                    category=category, min_rating=min_rating,
+                    max_size=max_size, qualities=qualities, genre=genre,
+                    year=year, search=search, page=page, limit=limit,
+                    deduplicate=True, origin=origin
+                )
+
         # Check if any items on the current page need their full details parsed (never parsed before)
         needs_details = [
             it["torrent_id"] for it in data["items"]
@@ -392,12 +415,6 @@ def run_server(port=PORT):
 
     # Watchdog monitor: stops server when browser closes
     threading.Thread(target=watchdog_monitor, daemon=True).start()
-
-    # Auto-scan initial 'movies' category only if database is fresh (1 page, first 15 with covers immediately)
-    count = database.query_releases(category="movies", days=0, max_size=0, min_rating=0, year="all")["total"]
-    if count == 0:
-        log("🚀 [СТАРТ] Первичная загрузка 15 фильмов с обложками...", "INFO")
-        threading.Thread(target=tracker_engine.scan_category, args=("movies", 2026, 1), daemon=True).start()
 
     try:
         server.serve_forever()

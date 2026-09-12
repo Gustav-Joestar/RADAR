@@ -590,17 +590,13 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
     cached_count = len(scanned_torrent_ids) - len(unique_titles_to_fetch)
     log(f"Категория [{category_name}]: {len(scanned_torrent_ids)} раздач найдено ({cached_count} из кэша, {len(unique_titles_to_fetch)} новых).", "INFO")
     
-    # Priority 1: Immediately fetch details and local posters for the top 15 releases of page 1
-    top_scanned_ids = unique_titles_to_fetch[:15]
-    page_1_data = database.query_releases(category=category_name, year=(str(year) if year else "all"), page=1, limit=15)
-    page_1_needed = [it["torrent_id"] for it in page_1_data.get("items", []) if not it.get("poster_url") or not it.get("description")]
-    combined_needed = list(dict.fromkeys(top_scanned_ids + page_1_needed))[:15]
-    
-    if combined_needed:
-        log(f"⚡ [ПОСТЕРЫ] Мгновенная загрузка данных и обложек для первых {len(combined_needed)} релизов витрины...", "INFO")
+    # Priority 1: Immediately fetch details, ratings and local posters for the top candidates
+    candidates = unique_titles_to_fetch[:20]
+    if candidates:
+        log(f"⚡ [РЕЙТИНГИ И ОБЛОЖКИ] Загрузка данных и рейтингов для {len(candidates)} релизов витрины...", "INFO")
         with ThreadPoolExecutor(max_workers=5) as executor:
-            list(executor.map(parse_full_details, combined_needed))
-        log(f"✅ [ПОСТЕРЫ] Витрина первой страницы полностью готова ({len(combined_needed)} обложек)!", "SUCCESS")
+            list(executor.map(parse_full_details, candidates))
+        log(f"✅ [РЕЙТИНГИ И ОБЛОЖКИ] Витрина первой страницы полностью готова!", "SUCCESS")
 
     log(f"Категория [{category_name}] полностью актуализирована!", "SUCCESS")
     return len(scanned_torrent_ids)

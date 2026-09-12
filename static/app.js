@@ -535,6 +535,13 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderCards(items, isWatchlist = false) {
     cardsGrid.innerHTML = '';
     items.forEach(item => {
+      // Strictly do not display movie/series cards if rating is not known
+      if (['movies', 'series'].includes(item.category || state.category) && !isWatchlist && !state.search) {
+        if ((!item.kp_rating || item.kp_rating <= 0) && (!item.imdb_rating || item.imdb_rating <= 0)) {
+          return;
+        }
+      }
+
       const card = document.createElement('div');
       card.className = 'media-card';
       card.id = `card-${item.torrent_id}`;

@@ -324,11 +324,14 @@ def query_releases(category="movies", min_rating=0.0, max_size=15.0,
         conditions.append("size_gb <= ?")
         params.append(max_size)
 
-    # Rating filter (only applied if min_rating > 0)
-    if min_rating and min_rating > 0 and category in ("movies", "series", "anime"):
-        conditions.append("(imdb_rating >= ? OR kp_rating >= ?)")
-        params.append(min_rating)
-        params.append(min_rating)
+    # Rating filter: strictly do not display movies/series without a known rating in discovery feed
+    if category in ("movies", "series", "anime"):
+        if min_rating and min_rating > 0:
+            conditions.append("(imdb_rating >= ? OR kp_rating >= ?)")
+            params.append(min_rating)
+            params.append(min_rating)
+        elif not (search and search.strip()):
+            conditions.append("(imdb_rating > 0 OR kp_rating > 0)")
 
     # Quality filter
     if qualities and len(qualities) > 0 and category in ("movies", "series", "anime"):
