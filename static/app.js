@@ -922,9 +922,19 @@ document.addEventListener('DOMContentLoaded', () => {
       .catch(() => {});
   }
 
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+  // Heartbeat to keep server running while browser window is open
+  function sendHeartbeat() {
+    fetch('/api/heartbeat', { method: 'POST' }).catch(() => {});
   }
+  sendHeartbeat();
+  setInterval(sendHeartbeat, 2500);
+
+  // Notify server when window is closing so process can exit cleanly
+  window.addEventListener('beforeunload', () => {
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon('/api/browser_closing');
+    } else {
+      fetch('/api/browser_closing', { method: 'POST', keepalive: true }).catch(() => {});
+    }
+  });
 });

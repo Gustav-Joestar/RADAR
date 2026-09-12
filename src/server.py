@@ -7,6 +7,8 @@ import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
+import time
+
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SRC_DIR)
 if SRC_DIR not in sys.path:
@@ -18,6 +20,38 @@ from logger import log, get_logs
 
 PORT = 8765
 STATIC_DIR = os.path.join(PROJECT_ROOT, "static")
+
+LAST_HEARTBEAT = time.time()
+SHUTDOWN_TIMER = None
+HEARTBEAT_ACTIVE = False
+
+def do_shutdown():
+    log("🛑 [СЕРВЕР] Окно браузера закрыто пользователем. Остановка процесса RADAR...", "INFO")
+    time.sleep(0.3)
+    os._exit(0)
+
+def cancel_shutdown():
+    global SHUTDOWN_TIMER
+    if SHUTDOWN_TIMER and SHUTDOWN_TIMER.is_alive():
+        SHUTDOWN_TIMER.cancel()
+        SHUTDOWN_TIMER = None
+
+def schedule_shutdown(delay=3.5):
+    global SHUTDOWN_TIMER
+    cancel_shutdown()
+    SHUTDOWN_TIMER = threading.Timer(delay, do_shutdown)
+    SHUTDOWN_TIMER.daemon = True
+    SHUTDOWN_TIMER.start()
+
+def watchdog_monitor():
+    # Initial grace period: wait 35s to allow user time to open browser
+    time.sleep(35)
+    while True:
+        time.sleep(2)
+        if HEARTBEAT_ACTIVE and (time.time() - LAST_HEARTBEAT > 10):
+            log("🛑 [СЕРВЕР] Потеряна связь с окном браузера (>10 сек). Остановка сервера RADAR...", "INFO")
+            time.sleep(0.3)
+            os._exit(0)
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
@@ -68,6 +102,15 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             self.handle_api_genres(params)
         elif path == "/api/years":
             self.handle_api_years(params)
+        elif path == "/api/heartbeat":
+            global LAST_HEARTBEAT, HEARTBEAT_ACTIVE
+            LAST_HEARTBEAT = time.time()
+            HEARTBEAT_ACTIVE = True
+            cancel_shutdown()
+            self.send_json({"status": "ok"})
+        elif path == "/api/browser_closing":
+            schedule_shutdown(3.5)
+            self.send_json({"status": "closing"})
         else:
             self.send_error(404, "Not Found")
 
@@ -82,7 +125,19 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
-        if path == "/api/refresh":
+        if path == "/api/heartbeat":
+            global LAST_HEARTBEAT, HEARTBEAT_ACTIVE
+            LAST_HEARTBEAT = time.time()
+            HEARTBEAT_ACTIVE = True
+            cancel_shutdown()
+            self.send_json({"status": "ok"})
+            return
+        elif path == "/api/browser_closing":
+            log("🛑 [СЕРВЕР] Сигнал закрытия окна браузера получен...", "INFO")
+            schedule_shutdown(3.5)
+            self.send_json({"status": "closing"})
+            return
+        elif path == "/api/refresh":
             category = data.get("category", "movies")
             y_val = data.get("year", "2026")
             year = int(y_val) if str(y_val).isdigit() else 0
@@ -276,6 +331,9 @@ def run_server(port=PORT):
     
     # Auto-fix existing countries in background
     threading.Thread(target=tracker_engine.fix_existing_countries_in_db, daemon=True).start()
+
+    # Watchdog monitor: stops server when browser closes
+    threading.Thread(target=watchdog_monitor, daemon=True).start()
 
     # Auto-scan initial categories if database is fresh
     for cat in ["movies", "series", "anime", "games", "software"]:

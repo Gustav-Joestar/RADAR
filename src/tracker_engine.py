@@ -321,9 +321,10 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                 elif '(' in raw_title:
                     title_ru = raw_title.split('(')[0].strip()
 
-                # Check if release was marked "Не буду смотреть"
+                # Check if release was marked "Не буду смотреть" or "Буду смотреть"
                 is_ign = database.is_ignored(torrent_id, title_ru, rel_year)
-                initial_status = 'ignored' if is_ign else 'new'
+                is_watch = database.is_watchlist(torrent_id, title_ru, rel_year)
+                initial_status = 'ignored' if is_ign else ('watchlist' if is_watch else 'new')
 
                 # Check if release is already in persistent cache with full details
                 cached = database.get_release_by_id(torrent_id)
