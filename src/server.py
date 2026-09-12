@@ -132,10 +132,6 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
                 self.send_json({"status": "ok", "torrent_id": tid})
             else:
                 self.send_error(400, "Missing torrent_id")
-        elif path == "/api/clear-cache":
-            database.clear_cache()
-            log("🗑️ [КЭШ] Пользователь полностью очистил локальную базу данных и кэш", "WARNING")
-            self.send_json({"status": "cleared", "message": "Cache successfully cleared"})
         else:
             self.send_error(404, "Not Found")
 
