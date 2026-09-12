@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
     max_size: 999.0,
     qualities: ['1080p', '720p'],
     genre: 'all',
-    origin: 'foreign',
+    origin: 'all',
     search: '',
     page: 1,
     limit: 15,
@@ -256,7 +256,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.max_size = 999.0;
     state.qualities = ['1080p', '720p'];
     state.genre = 'all';
-    state.origin = 'foreign';
+    state.origin = 'all';
     state.search = '';
     state.page = 1;
 
@@ -452,7 +452,7 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     }
 
-    if (russianToggle) state.origin = russianToggle.checked ? 'russian' : 'foreign';
+    if (russianToggle) state.origin = russianToggle.checked ? 'russian' : 'all';
     if (yearSelect) state.year = yearSelect.value;
     if (genreSelect) state.genre = genreSelect.value;
     if (ratingToggle) state.min_rating = ratingToggle.checked ? 7.0 : 0.0;
@@ -663,6 +663,40 @@ document.addEventListener('DOMContentLoaded', () => {
       posterLoadDone++;
       updatePosterProgress(posterLoadDone, posterLoadTotal);
       delete posterRetryTimers[torrentId];
+
+      // Fetch fresh metadata to update card genre, country, and ratings dynamically
+      fetch(`/api/item?id=${torrentId}`)
+        .then(res => res.json())
+        .then(item => {
+          if (!item || item.error) return;
+          const card = document.getElementById(`card-${torrentId}`);
+          if (!card) return;
+          const genreEl = card.querySelector('.card-genres');
+          if (genreEl && item.genre) {
+            genreEl.textContent = item.genre;
+          }
+          if (item.country) {
+            const countryEl = card.querySelector('.card-country-box');
+            if (countryEl) {
+              countryEl.outerHTML = formatCountryBadge(item.country);
+            } else {
+              const genreNode = card.querySelector('.card-genres');
+              if (genreNode) {
+                genreNode.insertAdjacentHTML('afterend', formatCountryBadge(item.country));
+              }
+            }
+          }
+          if (item.kp_rating > 0 || item.imdb_rating > 0) {
+            const ratingsWrap = card.querySelector('.card-ratings-wrap');
+            if (ratingsWrap) {
+              let rHtml = '';
+              if (item.kp_rating > 0) rHtml += `<div class="badge-rating kp-badge" title="Кинопоиск">КП ${item.kp_rating}</div>`;
+              if (item.imdb_rating > 0) rHtml += `<div class="badge-rating imdb-badge" title="IMDb">IMDb ${item.imdb_rating}</div>`;
+              ratingsWrap.innerHTML = rHtml;
+            }
+          }
+        })
+        .catch(() => {});
     };
     testImg.onerror = function() {
       if (attempt >= maxAttempts) {
@@ -819,6 +853,31 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderModalDetails(item) {
+    // Also synchronize the background card in the grid if present
+    const gridCard = document.getElementById(`card-${item.torrent_id}`);
+    if (gridCard) {
+      const gEl = gridCard.querySelector('.card-genres');
+      if (gEl && item.genre) gEl.textContent = item.genre;
+      if (item.country) {
+        const cEl = gridCard.querySelector('.card-country-box');
+        if (cEl) {
+          cEl.outerHTML = formatCountryBadge(item.country);
+        } else {
+          const gNode = gridCard.querySelector('.card-genres');
+          if (gNode) gNode.insertAdjacentHTML('afterend', formatCountryBadge(item.country));
+        }
+      }
+      if (item.kp_rating > 0 || item.imdb_rating > 0) {
+        const ratingsWrap = gridCard.querySelector('.card-ratings-wrap');
+        if (ratingsWrap) {
+          let rHtml = '';
+          if (item.kp_rating > 0) rHtml += `<div class="badge-rating kp-badge" title="Кинопоиск">КП ${item.kp_rating}</div>`;
+          if (item.imdb_rating > 0) rHtml += `<div class="badge-rating imdb-badge" title="IMDb">IMDb ${item.imdb_rating}</div>`;
+          ratingsWrap.innerHTML = rHtml;
+        }
+      }
+    }
+
     let audioTracksList = [];
     try {
       audioTracksList = typeof item.audio_tracks === 'string' ? JSON.parse(item.audio_tracks || '[]') : item.audio_tracks;

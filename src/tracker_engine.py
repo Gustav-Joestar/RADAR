@@ -166,7 +166,7 @@ def download_image_bytes(poster_url):
 
     return None
 
-def cache_poster_locally(torrent_id, poster_url, min_size_bytes=0):
+def cache_poster_locally(torrent_id, poster_url, min_size_bytes=15360):
     """Download remote poster and save to data/posters/<torrent_id>.jpg for complete offline autonomy."""
     if not poster_url or not torrent_id:
         return ""
@@ -180,7 +180,7 @@ def cache_poster_locally(torrent_id, poster_url, min_size_bytes=0):
     if os.path.exists(local_file_path):
         try:
             sz = os.path.getsize(local_file_path)
-            req_size = min_size_bytes if min_size_bytes > 0 else 10000
+            req_size = min_size_bytes if min_size_bytes > 0 else 15360
             if sz >= req_size:
                 with open(local_file_path, "rb") as f:
                     head = f.read(64)
@@ -535,6 +535,12 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
 
                 quality = extract_quality(raw_title)
 
+                detected_country = ""
+                if "/5/" in url or "nashe_kino" in url or "/16/" in url:
+                    detected_country = "Россия"
+                elif any(cue in t_lower for cue in ["от exkinoray", "files-x", "сериал ссср", "мосфильм", "ленфильм"]):
+                    detected_country = "Россия"
+
                 item_data = {
                     "torrent_id": torrent_id,
                     "category": category_name,
@@ -558,7 +564,7 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     "director": "",
                     "actors": "",
                     "description": "",
-                    "country": "",
+                    "country": detected_country,
                     "duration": "",
                     "imdb_rating": 0.0,
                     "kp_rating": 0.0,
@@ -974,10 +980,10 @@ def parse_full_details(torrent_id):
                     if local_kp and local_kp.startswith("/posters/"):
                         final_poster = local_kp
 
-            # Priority 2: Rutor tracker candidates (strictly filtered: min 50 KB, vertical, no icons/flags)
+            # Priority 2: Rutor tracker candidates (strictly filtered: min 15 KB, vertical, no icons/flags)
             if not final_poster:
                 for cand in poster_candidates:
-                    local_poster = cache_poster_locally(torrent_id, cand, min_size_bytes=51200)
+                    local_poster = cache_poster_locally(torrent_id, cand, min_size_bytes=15360)
                     if local_poster and local_poster.startswith("/posters/"):
                         final_poster = local_poster
                         break

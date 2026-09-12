@@ -229,7 +229,7 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         search = params.get("search", [""])[0]
         page = int(params.get("page", ["1"])[0])
         limit = int(params.get("limit", ["15"])[0])
-        origin = params.get("origin", ["foreign"])[0]
+        origin = params.get("origin", ["all"])[0]
         qualities = params.get("quality", None)
         if qualities:
             qualities = qualities[0].split(",") if isinstance(qualities[0], str) else qualities
@@ -267,24 +267,29 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
                 deduplicate=True, origin=origin
             )
 
-        # Ensure page 1 has all posters loaded immediately so user sees complete cards
-        if page == 1 and not search:
-            missing_ids = [it["torrent_id"] for it in data["items"] if not it.get("poster_url")]
-            if missing_ids:
+        # Check if any items on the current page need their full details parsed (never parsed before)
+        needs_details = [
+            it["torrent_id"] for it in data["items"]
+            if not it.get("description") and not it.get("video_info") and not it.get("audio_info")
+        ]
+        if needs_details:
+            # If only 1-2 items (e.g. focused search), load quickly; otherwise run in background
+            if len(needs_details) <= 2:
                 from concurrent.futures import ThreadPoolExecutor
-                log(f"⚡ [ПОСТЕРЫ] Мгновенная дозагрузка {len(missing_ids)} обложек для витрины...", "INFO")
-                with ThreadPoolExecutor(max_workers=5) as executor:
-                    list(executor.map(tracker_engine.parse_full_details, missing_ids))
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    list(executor.map(tracker_engine.parse_full_details, needs_details))
                 data = database.query_releases(
                     category=category, min_rating=min_rating,
                     max_size=max_size, qualities=qualities, genre=genre,
                     year=year, search=search, page=page, limit=limit,
                     deduplicate=True, origin=origin
                 )
-        elif page > 1:
-            missing_ids = [it["torrent_id"] for it in data["items"] if not it.get("poster_url")]
-            if missing_ids:
-                threading.Thread(target=lambda ids: [tracker_engine.parse_full_details(tid) for tid in ids], args=(missing_ids,), daemon=True).start()
+            else:
+                threading.Thread(
+                    target=lambda ids: [tracker_engine.parse_full_details(tid) for tid in ids],
+                    args=(needs_details,),
+                    daemon=True
+                ).start()
 
         log(f"✅ [РАДАР] Итого: {data['total']} релизов (выведено {len(data['items'])} на стр. {page})", "SUCCESS")
         self.send_json(data)
