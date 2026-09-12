@@ -535,7 +535,7 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     "audio_tracks": "[]",
                     "voiceover": "",
                     "subtitles": "",
-                    "genre": "",
+                    "genre": "Мультфильм" if any(w in t_lower for w in ["мультфильм", "мультсериал", "аниме"]) else ("Сериал" if category_name == "series" else "Фильм"),
                     "director": "",
                     "actors": "",
                     "description": "",
@@ -566,17 +566,19 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
     log(f"Категория [{category_name}]: {len(scanned_torrent_ids)} раздач найдено ({cached_count} из кэша, {len(unique_titles_to_fetch)} новых).", "INFO")
     
     # Priority 1: Immediately fetch details and local posters for the top 15 releases of page 1
-    page_1_data = database.query_releases(category=category_name, page=1, limit=15)
+    top_scanned_ids = unique_titles_to_fetch[:15]
+    page_1_data = database.query_releases(category=category_name, year=(str(year) if year else "all"), page=1, limit=15)
     page_1_needed = [it["torrent_id"] for it in page_1_data.get("items", []) if not it.get("poster_url") or not it.get("description")]
+    combined_needed = list(dict.fromkeys(top_scanned_ids + page_1_needed))[:15]
     
-    if page_1_needed:
-        log(f"⚡ [ПОСТЕРЫ] Мгновенная загрузка данных и обложек для первых {len(page_1_needed)} релизов витрины...", "INFO")
+    if combined_needed:
+        log(f"⚡ [ПОСТЕРЫ] Мгновенная загрузка данных и обложек для первых {len(combined_needed)} релизов витрины...", "INFO")
         with ThreadPoolExecutor(max_workers=5) as executor:
-            list(executor.map(parse_full_details, page_1_needed))
-        log(f"✅ [ПОСТЕРЫ] Витрина первой страницы полностью готова ({len(page_1_needed)} обложек)!", "SUCCESS")
+            list(executor.map(parse_full_details, combined_needed))
+        log(f"✅ [ПОСТЕРЫ] Витрина первой страницы полностью готова ({len(combined_needed)} обложек)!", "SUCCESS")
 
     # Priority 2: Process remaining background releases lazily in background
-    remaining_to_fetch = [tid for tid in unique_titles_to_fetch if tid not in page_1_needed]
+    remaining_to_fetch = [tid for tid in unique_titles_to_fetch if tid not in combined_needed]
     if remaining_to_fetch:
         import threading
         def _fetch_remaining_lazily(items):
@@ -591,6 +593,59 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
 
     log(f"Категория [{category_name}] полностью актуализирована!", "SUCCESS")
     return len(scanned_torrent_ids)
+
+STOP_METADATA_FIELDS = (
+    r'Страна|Студия|Производство|Выпущено|Премьера|Мировая премьера|Премьера в РФ|'
+    r'Возраст|Рейтинг MPAA|Бюджет|Сборы|Время|Продолжительность|Качество|Качество видео|'
+    r'Формат|Видео|Видеокодек|Аудио|Аудиокодек|Звук|Перевод|Озвучивание|Озвучка|'
+    r'Субтитры|Режиссер|Режиссёр|В ролях|Актеры|Файл|Релиз|Технические|MediaInfo'
+)
+
+GENRES_DICTIONARY = [
+    'боевик', 'комедия', 'триллер', 'драма', 'ужасы', 'фантастика', 'фэнтези',
+    'детектив', 'криминал', 'мелодрама', 'приключения', 'мультфильм', 'аниме',
+    'документальный', 'вестерн', 'биография', 'история', 'семейный', 'военный',
+    'мюзикл', 'спорт'
+]
+
+def fetch_ratings_by_search(title_ru, title_en="", year=0):
+    """Search Kinopoisk ID and XML ratings by title + year via DuckDuckGo."""
+    kp_rating = 0.0
+    imdb_rating = 0.0
+    kp_id = None
+
+    queries = []
+    if title_ru and year:
+        queries.append(f"кинопоиск фильм {title_ru} {year}")
+    elif title_ru:
+        queries.append(f"кинопоиск {title_ru}")
+    if title_en and year:
+        queries.append(f"kinopoisk {title_en} {year}")
+    elif title_en:
+        queries.append(f"kinopoisk {title_en}")
+
+    for q in queries:
+        try:
+            url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(q)}"
+            r = requests.get(url, impersonate='chrome124', timeout=5)
+            m = re.search(r'kinopoisk\.ru/film/(\d+)', r.text)
+            if m:
+                cand_id = m.group(1)
+                r_xml = requests.get(f"https://rating.kinopoisk.ru/{cand_id}.xml", timeout=4)
+                if r_xml.status_code == 200:
+                    km = re.search(r'<kp_rating[^>]*>([\d\.]+)</kp_rating>', r_xml.text)
+                    im = re.search(r'<imdb_rating[^>]*>([\d\.]+)</imdb_rating>', r_xml.text)
+                    if km and float(km.group(1)) > 0:
+                        kp_rating = round(float(km.group(1)), 1)
+                    if im and float(im.group(1)) > 0:
+                        imdb_rating = round(float(im.group(1)), 1)
+                    kp_id = cand_id
+                    if kp_rating > 0 or imdb_rating > 0:
+                        break
+        except Exception:
+            pass
+
+    return kp_rating, imdb_rating, kp_id
 
 def parse_full_details(torrent_id):
     url = f"http://rutor.info/torrent/{torrent_id}"
@@ -646,6 +701,16 @@ def parse_full_details(torrent_id):
         actors = find_field([r'В ролях:\s*([^\n\r]+)', r'Актеры:\s*([^\n\r]+)', r'Cast:\s*([^\n\r]+)'])
         country = extract_clean_country(full_text)
         duration = find_field([r'Продолжительность:\s*([^\n\r]+)', r'Время:\s*([^\n\r]+)'])
+
+        # Fallback genre detection if not explicitly parsed
+        if not genre:
+            found_genres = []
+            text_lower = full_text.lower()
+            for g in GENRES_DICTIONARY:
+                if re.search(rf'\b{g}\b', text_lower):
+                    found_genres.append(g.capitalize())
+            if found_genres:
+                genre = ", ".join(found_genres[:3])
 
         # Universal Multi-Line Parser for Translations, Audio tracks, Subtitles, Video
         translation_lines = []
@@ -728,12 +793,24 @@ def parse_full_details(torrent_id):
                     if p and p.lower() != 'нет':
                         subtitles_list.append(p)
 
-        desc_m = re.search(r'(?:О фильме|Описание|Сюжет|О сериале|О программе|Об игре):\s*\n*(.*?)(?=\n\s*(?:Выпущено|Продолжительность|Файл|Качество|Видео|Перевод|Релиз|Технические|MediaInfo|\Z))', full_text, re.DOTALL | re.IGNORECASE)
+        # Extract description with strict boundary stopping at any metadata header
+        desc_m = re.search(
+            rf'(?:О фильме|Описание|Сюжет|О сериале|О программе|Об игре):\s*\n*(.*?)(?=\n\s*(?:{STOP_METADATA_FIELDS})\s*:|\Z)',
+            full_text,
+            re.DOTALL | re.IGNORECASE
+        )
         description = desc_m.group(1).strip() if desc_m else ""
+        if description:
+            # Cut off any metadata lines that leaked into description text
+            parts = re.split(rf'(?:\n|\r|\s{{2,}})(?:{STOP_METADATA_FIELDS})\s*:', description, flags=re.IGNORECASE)
+            if parts:
+                description = parts[0].strip()
+            description = re.sub(rf'\s*(?:{STOP_METADATA_FIELDS})\s*:[^\n\r]+', '', description, flags=re.IGNORECASE).strip()
 
         # 1. Fetch ratings from Kinopoisk and IMDb, and use Kinopoisk poster as fallback
         kp_rating = 0.0
         imdb_rating = 0.0
+        kp_id = None
 
         kp_m = re.search(r'kinopoisk\.ru/film/(\d+)', html)
         if kp_m:
@@ -760,11 +837,26 @@ def parse_full_details(torrent_id):
             if kp_txt_m:
                 kp_rating = round(float(kp_txt_m.group(1)), 1)
 
-        # Season links for series
-        seasons_info = []
+        # Existing DB record for title/year info
+        existing = database.get_release_by_id(torrent_id)
         raw_title = soup.select_one('h1').text if soup.select_one('h1') else ""
         title_clean = raw_title.split('/')[0].split('(')[0].strip()
+        t_ru = existing.get("title_ru") if existing else title_clean
+        t_en = existing.get("title_en") if existing else ""
+        r_year = existing.get("year") if existing else 0
 
+        # Automatic web search fallback if ratings are missing
+        if kp_rating == 0.0 or imdb_rating == 0.0:
+            s_kp, s_imdb, s_kpid = fetch_ratings_by_search(t_ru, t_en, r_year)
+            if kp_rating == 0.0 and s_kp > 0:
+                kp_rating = s_kp
+            if imdb_rating == 0.0 and s_imdb > 0:
+                imdb_rating = s_imdb
+            if not kp_id and s_kpid:
+                kp_id = s_kpid
+
+        # Season links for series
+        seasons_info = []
         if any(w in raw_title.lower() for w in ['сезон', 'серии', 's0']):
             for s_num in range(1, 6):
                 seasons_info.append({
@@ -777,7 +869,6 @@ def parse_full_details(torrent_id):
         if mi_m:
             mediainfo = mi_m.group(1)[:2000].strip()
 
-        existing = database.get_release_by_id(torrent_id)
         if existing:
             update_data = dict(existing)
             # Re-evaluate quality accurately using video_info resolution
@@ -792,8 +883,7 @@ def parse_full_details(torrent_id):
                     break
 
             # If Rutor candidates didn't succeed, try Kinopoisk fallback if available
-            if not final_poster and kp_m:
-                kp_id = kp_m.group(1)
+            if not final_poster and kp_id:
                 kp_url = f"https://st.kp.yandex.net/images/film_iphone/iphone360_{kp_id}.jpg"
                 local_kp = cache_poster_locally(torrent_id, kp_url)
                 if local_kp and local_kp.startswith("/posters/"):

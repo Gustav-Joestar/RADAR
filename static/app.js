@@ -605,7 +605,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="card-content">
           <h3 class="card-title" title="${item.title}">${item.title_ru}</h3>
           <div class="card-orig">${item.title_en ? `${item.title_en} · ` : ''}${item.year || ''}</div>
-          <div class="card-genres">${item.genre || 'Релиз трекера'}</div>
+          <div class="card-genres">${item.genre || (item.category === 'series' ? 'Сериал' : 'Фильм')}</div>
           ${formatCountryBadge(item.country)}
           <div class="card-meta-row">
             <span class="card-size">${item.size_str || `${item.size_gb} GB`}</span>
@@ -836,7 +836,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const audioTagsHtml = (audioTracksList && audioTracksList.length > 0)
       ? audioTracksList.map(t => `<div class="stream-tag" style="display: block; width: 100%; margin-bottom: 6px; padding: 6px 10px; font-size: 12px; line-height: 1.4; border-radius: 6px; background: rgba(0, 255, 204, 0.07); border: 1px solid rgba(0, 255, 204, 0.2);">🔊 ${t}</div>`).join('')
-      : `<span class="stream-tag">${item.audio_info || 'Информация уточняется'}</span>`;
+      : (item.audio_info 
+          ? `<span class="stream-tag">${item.audio_info}</span>`
+          : (item.voiceover ? '' : `<span class="stream-tag">Информация о звуке отсутствует</span>`));
 
     const subsTagsHtml = (subsList && subsList.length > 0 && subsList[0])
       ? subsList.map(s => `<span class="stream-tag" style="margin-right: 4px; margin-bottom: 4px; display: inline-block;">📄 ${s}</span>`).join('')
