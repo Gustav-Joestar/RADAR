@@ -22,6 +22,14 @@ CATEGORY_MAP = {
     "software": [9]       # Программы
 }
 
+CATEGORY_HUBS = {
+    "movies": ["http://rutor.info/kino", "http://rutor.info/nashe_kino"],
+    "series": ["http://rutor.info/seriali", "http://rutor.info/tv"],
+    "anime": ["http://rutor.info/anime"],
+    "games": ["http://rutor.info/games"],
+    "software": ["http://rutor.info/soft"]
+}
+
 GENRE_KEYWORDS = {
     "Боевик": ["боевик", "action"],
     "Комедия": ["комедия", "comedy"],
@@ -118,114 +126,117 @@ def scan_category(category_name, year=2026, max_pages=2):
     unique_titles_to_fetch = []
     seen_titles = set()
 
+    # Build target URLs: Hubs (kino, nashe_kino) + year search pages
+    urls_to_scan = list(CATEGORY_HUBS.get(category_name, []))
     for cat_id in cat_ids:
         for page in range(max_pages):
             if year and year > 0 and category_name in ("movies", "series", "anime"):
-                url = f"http://rutor.info/search/{page}/{cat_id}/0/0/{year}"
+                urls_to_scan.append(f"http://rutor.info/search/{page}/{cat_id}/0/0/{year}")
             else:
-                url = f"http://rutor.info/browse/{page}/{cat_id}/0/0"
+                urls_to_scan.append(f"http://rutor.info/browse/{page}/{cat_id}/0/0")
 
-            log(f"Сканирование: {url}", "DEBUG")
-            try:
-                r = requests.get(url, impersonate='chrome124', timeout=8)
-                if r.status_code != 200:
-                    continue
-                soup = BeautifulSoup(r.content.decode('utf-8', errors='replace'), 'html.parser')
-                rows = soup.select('div#index tr')
+    for url in urls_to_scan:
+        log(f"📡 [СКАНЕР] Проверка страницы: {url}", "DEBUG")
+        try:
+            r = requests.get(url, impersonate='chrome124', timeout=8)
+            if r.status_code != 200:
+                continue
+            soup = BeautifulSoup(r.content.decode('utf-8', errors='replace'), 'html.parser')
+            rows = soup.select('div#index tr')
                 
-                for tr in rows:
-                    t_link = tr.select_one('a[href*="/torrent/"]')
-                    if not t_link:
-                        continue
-                    
-                    href = t_link['href']
-                    t_id_match = re.search(r'/torrent/(\d+)', href)
-                    if not t_id_match:
-                        continue
-                    torrent_id = t_id_match.group(1)
-                    # Skip pinned rules / announcements
-                    if int(torrent_id) < 500000:
-                        continue
+            for tr in rows:
+                t_link = tr.select_one('a[href*="/torrent/"]')
+                if not t_link:
+                    continue
+                
+                href = t_link['href']
+                t_id_match = re.search(r'/torrent/(\d+)', href)
+                if not t_id_match:
+                    continue
+                torrent_id = t_id_match.group(1)
+                # Skip pinned rules / announcements
+                if int(torrent_id) < 500000:
+                    continue
 
-                    raw_title = t_link.text.strip()
+                raw_title = t_link.text.strip()
 
-                    tds = tr.find_all('td')
-                    date_str = tds[0].text.strip() if len(tds) > 0 else ''
-                    date_ts = parse_date_to_timestamp(date_str)
-                    size_str = tds[-2].text.strip() if len(tds) > 2 else ''
-                    size_gb = parse_size_gb(size_str)
-                    
-                    s_tag = tr.select_one('span.green')
-                    p_tag = tr.select_one('span.red')
-                    seeds = int(re.sub(r'\D', '', s_tag.text)) if s_tag else 0
-                    peers = int(re.sub(r'\D', '', p_tag.text)) if p_tag else 0
+                tds = tr.find_all('td')
+                date_str = tds[0].text.strip() if len(tds) > 0 else ''
+                date_ts = parse_date_to_timestamp(date_str)
+                size_str = tds[-2].text.strip() if len(tds) > 2 else ''
+                size_gb = parse_size_gb(size_str)
+                
+                s_tag = tr.select_one('span.green')
+                p_tag = tr.select_one('span.red')
+                seeds = int(re.sub(r'\D', '', s_tag.text)) if s_tag else 0
+                peers = int(re.sub(r'\D', '', p_tag.text)) if p_tag else 0
 
-                    if seeds == 0 and peers == 0 and size_gb == 0:
-                        continue
+                if seeds == 0 and peers == 0 and size_gb == 0:
+                    continue
 
-                    title_ru = raw_title
-                    title_en = ""
-                    rel_year = year if (year and year > 0) else 0
+                title_ru = raw_title
+                title_en = ""
+                rel_year = year if (year and year > 0) else 0
 
-                    y_m = re.search(r'\((\d{4})\)', raw_title)
-                    if y_m:
-                        rel_year = int(y_m.group(1))
+                y_m = re.search(r'\((\d{4})\)', raw_title)
+                if y_m:
+                    rel_year = int(y_m.group(1))
 
-                    if '/' in raw_title:
-                        parts = raw_title.split('/')
-                        title_ru = parts[0].strip()
-                        second = parts[1].strip()
-                        title_en = second.split('(')[0].strip() if '(' in second else second.split('|')[0].strip()
-                    elif '(' in raw_title:
-                        title_ru = raw_title.split('(')[0].strip()
+                if '/' in raw_title:
+                    parts = raw_title.split('/')
+                    title_ru = parts[0].strip()
+                    second = parts[1].strip()
+                    title_en = second.split('(')[0].strip() if '(' in second else second.split('|')[0].strip()
+                elif '(' in raw_title:
+                    title_ru = raw_title.split('(')[0].strip()
 
-                    quality = extract_quality(raw_title)
-                    initial_genre = detect_genre_from_title(raw_title)
+                quality = extract_quality(raw_title)
+                initial_genre = detect_genre_from_title(raw_title)
 
-                    item_data = {
-                        "torrent_id": torrent_id,
-                        "category": category_name,
-                        "title": raw_title,
-                        "title_ru": title_ru,
-                        "title_en": title_en,
-                        "year": rel_year,
-                        "date_added": date_str,
-                        "date_ts": date_ts,
-                        "size_gb": size_gb,
-                        "size_str": size_str,
-                        "seeds": seeds,
-                        "peers": peers,
-                        "quality": quality,
-                        "video_info": "",
-                        "audio_info": "",
-                        "audio_tracks": "[]",
-                        "voiceover": "",
-                        "subtitles": "",
-                        "genre": initial_genre,
-                        "director": "",
-                        "actors": "",
-                        "description": "",
-                        "country": "",
-                        "duration": "",
-                        "imdb_rating": 0.0,
-                        "kp_rating": 0.0,
-                        "poster_url": "",
-                        "torrent_url": f"http://d.rutor.info/download/{torrent_id}",
-                        "magnet_url": f"magnet:?xt=urn:btih:&dn={urllib.parse.quote(raw_title)}",
-                        "source_url": f"http://rutor.info{href}",
-                        "seasons_info": "[]",
-                        "mediainfo": ""
-                    }
-                    database.upsert_release(item_data)
-                    scanned_torrent_ids.append(torrent_id)
+                item_data = {
+                    "torrent_id": torrent_id,
+                    "category": category_name,
+                    "title": raw_title,
+                    "title_ru": title_ru,
+                    "title_en": title_en,
+                    "year": rel_year,
+                    "date_added": date_str,
+                    "date_ts": date_ts,
+                    "size_gb": size_gb,
+                    "size_str": size_str,
+                    "seeds": seeds,
+                    "peers": peers,
+                    "quality": quality,
+                    "video_info": "",
+                    "audio_info": "",
+                    "audio_tracks": "[]",
+                    "voiceover": "",
+                    "subtitles": "",
+                    "genre": initial_genre,
+                    "director": "",
+                    "actors": "",
+                    "description": "",
+                    "country": "",
+                    "duration": "",
+                    "imdb_rating": 0.0,
+                    "kp_rating": 0.0,
+                    "poster_url": "",
+                    "torrent_url": f"http://d.rutor.info/download/{torrent_id}",
+                    "magnet_url": f"magnet:?xt=urn:btih:&dn={urllib.parse.quote(raw_title)}",
+                    "source_url": f"http://rutor.info{href}",
+                    "seasons_info": "[]",
+                    "mediainfo": ""
+                }
+                database.upsert_release(item_data)
+                scanned_torrent_ids.append(torrent_id)
 
-                    title_key = f"{title_ru.lower()}_{rel_year}"
-                    if title_key not in seen_titles:
-                        seen_titles.add(title_key)
-                        unique_titles_to_fetch.append(torrent_id)
+                title_key = f"{title_ru.lower()}_{rel_year}"
+                if title_key not in seen_titles:
+                    seen_titles.add(title_key)
+                    unique_titles_to_fetch.append(torrent_id)
 
-            except Exception as e:
-                log(f"Ошибка парсинга {url}: {e}", "ERROR")
+        except Exception as e:
+            log(f"⚠️ Ошибка парсинга {url}: {e}", "ERROR")
 
     log(f"Категория [{category_name}]: обнаружено {len(scanned_torrent_ids)} раздач ({len(unique_titles_to_fetch)} уникальных тайтлов).", "INFO")
     log(f"Загрузка обложек и полных данных (16 полей)...", "INFO")
