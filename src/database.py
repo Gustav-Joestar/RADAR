@@ -95,12 +95,23 @@ def upsert_release(data):
     conn.close()
 
 def query_releases(category="movies", days=7, min_rating=0.0, max_size=15.0,
-                   qualities=None, genre=None, search=None, page=1, limit=15):
+                   qualities=None, genre=None, year="2026", search=None,
+                   page=1, limit=15, deduplicate=True):
     conn = get_connection()
     c = conn.cursor()
 
     conditions = ["category = ?"]
     params = [category]
+
+    # Year filter
+    if year and str(year) != "all":
+        try:
+            y_val = int(year)
+            if y_val > 0:
+                conditions.append("year = ?")
+                params.append(y_val)
+        except ValueError:
+            pass
 
     # Date filter
     if days and days > 0:
@@ -140,20 +151,42 @@ def query_releases(category="movies", days=7, min_rating=0.0, max_size=15.0,
 
     where_clause = " WHERE " + " AND ".join(conditions)
 
-    # Count
-    count_sql = f"SELECT COUNT(*) FROM releases {where_clause}"
-    c.execute(count_sql, params)
-    total_count = c.fetchone()[0]
+    if deduplicate:
+        # Deduplicate by grouping movie title and year, picking release with highest seeds
+        dedup_sql = f"""
+        SELECT id, ROW_NUMBER() OVER (
+            PARTITION BY LOWER(TRIM(COALESCE(NULLIF(title_ru, ''), title))), year
+            ORDER BY seeds DESC, size_gb DESC
+        ) as rn
+        FROM releases
+        {where_clause}
+        """
+        count_sql = f"SELECT COUNT(*) FROM ({dedup_sql}) AS ranked WHERE rn = 1"
+        c.execute(count_sql, params)
+        total_count = c.fetchone()[0]
 
-    # Paginated data
-    offset = (page - 1) * limit
-    data_sql = f"""
-    SELECT * FROM releases
-    {where_clause}
-    ORDER BY date_ts DESC, seeds DESC
-    LIMIT ? OFFSET ?
-    """
-    c.execute(data_sql, params + [limit, offset])
+        offset = (page - 1) * limit
+        data_sql = f"""
+        SELECT r.* FROM releases r
+        JOIN ({dedup_sql}) ranked ON r.id = ranked.id AND ranked.rn = 1
+        ORDER BY r.date_ts DESC, r.seeds DESC
+        LIMIT ? OFFSET ?
+        """
+        c.execute(data_sql, params + [limit, offset])
+    else:
+        count_sql = f"SELECT COUNT(*) FROM releases {where_clause}"
+        c.execute(count_sql, params)
+        total_count = c.fetchone()[0]
+
+        offset = (page - 1) * limit
+        data_sql = f"""
+        SELECT * FROM releases
+        {where_clause}
+        ORDER BY date_ts DESC, seeds DESC
+        LIMIT ? OFFSET ?
+        """
+        c.execute(data_sql, params + [limit, offset])
+
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
 
@@ -170,8 +203,25 @@ def get_release_by_id(item_id):
     c = conn.cursor()
     c.execute("SELECT * FROM releases WHERE id = ? OR torrent_id = ?", (item_id, str(item_id)))
     row = c.fetchone()
+    if not row:
+        conn.close()
+        return None
+    
+    item = dict(row)
+    # Find alternative releases for this title
+    title_key = item.get("title_ru") or item.get("title_en") or item.get("title") or ""
+    year = item.get("year", 0)
+    c.execute("""
+        SELECT id, torrent_id, quality, size_str, seeds, peers, torrent_url, magnet_url, title
+        FROM releases
+        WHERE (LOWER(TRIM(title_ru)) = LOWER(TRIM(?)) OR LOWER(TRIM(title)) = LOWER(TRIM(?)))
+          AND id != ?
+        ORDER BY seeds DESC
+    """, (title_key, title_key, item["id"]))
+    alt_rows = [dict(r) for r in c.fetchall()]
+    item["alternatives"] = alt_rows
     conn.close()
-    return dict(row) if row else None
+    return item
 
 def get_distinct_genres(category="movies"):
     conn = get_connection()
@@ -189,5 +239,20 @@ def get_distinct_genres(category="movies"):
                 genres.add(clean_g)
 
     return sorted(list(genres))
+
+def get_distinct_years(category="movies"):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        SELECT DISTINCT year FROM releases 
+        WHERE category = ? AND year >= 1990 AND year <= 2030
+        ORDER BY year DESC
+    """, (category,))
+    rows = c.fetchall()
+    conn.close()
+    years = [r[0] for r in rows if r[0]]
+    if 2026 not in years:
+        years.insert(0, 2026)
+    return years
 
 init_db()

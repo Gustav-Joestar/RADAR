@@ -92,15 +92,22 @@ def detect_genre_from_title(title):
             found.append(g_name)
     return ", ".join(found) if found else ""
 
-def scan_category(category_name, max_pages=3):
-    log(f"Начало радарного сканирования категории [{category_name}]...", "INFO")
+def scan_category(category_name, year=2026, max_pages=2):
+    year_label = f" (год: {year})" if year and year > 0 else ""
+    log(f"Начало радарного сканирования категории [{category_name}]{year_label}...", "INFO")
     cat_ids = CATEGORY_MAP.get(category_name, [1])
     scanned_torrent_ids = []
+    unique_titles_to_fetch = []
+    seen_titles = set()
 
     for cat_id in cat_ids:
         for page in range(max_pages):
-            url = f"http://rutor.info/browse/{page}/{cat_id}/0/0"
-            log(f"Сканирование страницы: {url}", "DEBUG")
+            if year and year > 0 and category_name in ("movies", "series", "anime"):
+                url = f"http://rutor.info/search/{page}/{cat_id}/0/0/{year}"
+            else:
+                url = f"http://rutor.info/browse/{page}/{cat_id}/0/0"
+
+            log(f"Сканирование: {url}", "DEBUG")
             try:
                 r = requests.get(url, impersonate='chrome124', timeout=8)
                 if r.status_code != 200:
@@ -118,6 +125,10 @@ def scan_category(category_name, max_pages=3):
                     if not t_id_match:
                         continue
                     torrent_id = t_id_match.group(1)
+                    # Skip pinned rules / announcements
+                    if int(torrent_id) < 500000:
+                        continue
+
                     raw_title = t_link.text.strip()
 
                     tds = tr.find_all('td')
@@ -131,13 +142,16 @@ def scan_category(category_name, max_pages=3):
                     seeds = int(re.sub(r'\D', '', s_tag.text)) if s_tag else 0
                     peers = int(re.sub(r'\D', '', p_tag.text)) if p_tag else 0
 
+                    if seeds == 0 and peers == 0 and size_gb == 0:
+                        continue
+
                     title_ru = raw_title
                     title_en = ""
-                    year = 0
+                    rel_year = year if (year and year > 0) else 0
 
                     y_m = re.search(r'\((\d{4})\)', raw_title)
                     if y_m:
-                        year = int(y_m.group(1))
+                        rel_year = int(y_m.group(1))
 
                     if '/' in raw_title:
                         parts = raw_title.split('/')
@@ -156,7 +170,7 @@ def scan_category(category_name, max_pages=3):
                         "title": raw_title,
                         "title_ru": title_ru,
                         "title_en": title_en,
-                        "year": year,
+                        "year": rel_year,
                         "date_added": date_str,
                         "date_ts": date_ts,
                         "size_gb": size_gb,
@@ -187,21 +201,27 @@ def scan_category(category_name, max_pages=3):
                     database.upsert_release(item_data)
                     scanned_torrent_ids.append(torrent_id)
 
+                    title_key = f"{title_ru.lower()}_{rel_year}"
+                    if title_key not in seen_titles:
+                        seen_titles.add(title_key)
+                        unique_titles_to_fetch.append(torrent_id)
+
             except Exception as e:
                 log(f"Ошибка парсинга {url}: {e}", "ERROR")
 
-    log(f"Собрано {len(scanned_torrent_ids)} релизов. Запуск подгрузки постеров и деталей...", "INFO")
+    log(f"Категория [{category_name}]: обнаружено {len(scanned_torrent_ids)} раздач ({len(unique_titles_to_fetch)} уникальных тайтлов).", "INFO")
+    log(f"Загрузка обложек и полных данных (16 полей)...", "INFO")
     
-    # Preload details for top 25 fresh releases concurrently
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        list(executor.map(parse_full_details, scanned_torrent_ids[:25]))
+    # Preload details for ALL unique titles concurrently
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        list(executor.map(parse_full_details, unique_titles_to_fetch))
 
-    log(f"Категория [{category_name}] полностью обновлена и готова к работе!", "SUCCESS")
+    log(f"Категория [{category_name}] полностью обновлена (с обложками и деталями)!", "SUCCESS")
 
 def parse_full_details(torrent_id):
     url = f"http://rutor.info/torrent/{torrent_id}"
     try:
-        r = requests.get(url, impersonate='chrome124', timeout=8)
+        r = requests.get(url, impersonate='chrome124', timeout=10)
         if r.status_code != 200:
             return None
 
@@ -217,13 +237,21 @@ def parse_full_details(torrent_id):
         poster_url = ""
         for img in details_table.select('img'):
             src = img.get('src', '')
-            if any(k in src.lower() for k in ['fastpic', 'postimg', 'radikal', 'imageban', 'lostpic', 'ibn.im', 'firepic', 'media', 'poster']):
+            if not src:
+                continue
+            if src.startswith('//'):
+                src = 'https:' + src
+            if any(k in src.lower() for k in ['fastpic', 'postimg', 'radikal', 'imageban', 'lostpix', 'ibn.im', 'firepic', 'media', 'poster', 'images', 'pictures', 'photobank', 'hostingkartinok', 'imgur', 'kinopoisk', 'kinomania', 'pic']):
                 poster_url = src
                 break
         if not poster_url:
             for img in details_table.select('img'):
                 src = img.get('src', '')
-                if not any(icon in src for icon in ['d.gif', 'm.png', 'com.gif', 'arrowup.gif', 'arrowdown.gif']):
+                if not src:
+                    continue
+                if src.startswith('//'):
+                    src = 'https:' + src
+                if not any(icon in src.lower() for icon in ['d.gif', 'm.png', 'com.gif', 'arrowup.gif', 'arrowdown.gif', 'smilies', 'share', 'button']):
                     poster_url = src
                     break
 

@@ -2,6 +2,7 @@
 document.addEventListener('DOMContentLoaded', () => {
   const state = {
     category: 'movies',
+    year: '2026',
     days: 7,
     min_rating: 0.0,
     max_size: 15.0,
@@ -27,8 +28,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const ratingToggle = document.getElementById('rating-toggle');
   const ratingWrap = document.getElementById('rating-filter-wrap');
   const qualityWrap = document.getElementById('quality-filter-wrap');
+  const yearWrap = document.getElementById('year-filter-wrap');
+  const yearSelect = document.getElementById('year-select');
   const searchInput = document.getElementById('search-input');
   const genreSelect = document.getElementById('genre-select');
+  const genreWrap = document.getElementById('genre-filter-wrap');
   const btnReset = document.getElementById('btn-reset-filters');
   const modalOverlay = document.getElementById('detail-modal');
   const modalContent = document.getElementById('modal-content');
@@ -39,8 +43,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const consoleMinimizeBtn = document.getElementById('console-minimize-btn');
   const debugConsole = document.getElementById('debug-console');
 
+  let posterPollInterval = null;
+
   // Initialize
   initEventListeners();
+  loadYears();
   loadGenres();
   fetchReleases();
   pollLogs();
@@ -54,22 +61,33 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.classList.add('active');
         state.category = btn.dataset.category;
         state.page = 1;
-        state.genre = 'all';
 
         if (state.category === 'games' || state.category === 'software') {
           ratingWrap.style.display = 'none';
           qualityWrap.style.display = 'none';
+          yearWrap.style.display = 'none';
           state.min_rating = 0.0;
         } else {
           ratingWrap.style.display = 'flex';
           qualityWrap.style.display = 'flex';
+          yearWrap.style.display = 'flex';
           state.min_rating = ratingToggle.checked ? 7.0 : 0.0;
         }
 
+        loadYears();
         loadGenres();
         fetchReleases();
       });
     });
+
+    // Year Dropdown
+    if (yearSelect) {
+      yearSelect.addEventListener('change', (e) => {
+        state.year = e.target.value;
+        state.page = 1;
+        fetchReleases();
+      });
+    }
 
     // Date Period Buttons
     document.querySelectorAll('#date-buttons .toggle-btn').forEach(btn => {
@@ -139,19 +157,24 @@ document.addEventListener('DOMContentLoaded', () => {
     // Refresh Tracker Data
     btnRefresh.addEventListener('click', () => {
       btnRefresh.classList.add('loading');
-      consoleStatusText.textContent = `Сканирование трекера [${state.category}]...`;
+      const yearInfo = (['movies', 'series', 'anime'].includes(state.category)) ? ` (${state.year})` : '';
+      consoleStatusText.textContent = `Сканирование трекера [${state.category}]${yearInfo}...`;
       fetch('/api/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category: state.category })
+        body: JSON.stringify({ category: state.category, year: state.year })
       })
       .then(res => res.json())
       .then(() => {
-        setTimeout(() => {
-          btnRefresh.classList.remove('loading');
-          loadGenres();
-          fetchReleases();
-        }, 3500);
+        let attempts = 0;
+        const interval = setInterval(() => {
+          attempts++;
+          fetchReleases(true); // silent update
+          if (attempts >= 6) {
+            clearInterval(interval);
+            btnRefresh.classList.remove('loading');
+          }
+        }, 2000);
       })
       .catch(() => btnRefresh.classList.remove('loading'));
     });
@@ -195,6 +218,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function resetFilters() {
+    state.year = '2026';
     state.days = 7;
     state.min_rating = 0.0;
     state.max_size = 15.0;
@@ -203,6 +227,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.search = '';
     state.page = 1;
 
+    if (yearSelect) yearSelect.value = '2026';
     searchInput.value = '';
     sizeSlider.value = 15;
     sizeVal.textContent = '15 GB';
@@ -220,16 +245,56 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchReleases();
   }
 
-  function fetchReleases() {
-    cardsGrid.innerHTML = `
-      <div style="grid-column: 1/-1; text-align: center; padding: 60px 0; color: var(--text-muted);">
-        <div style="font-size: 36px; margin-bottom: 12px; animation: spin 1.5s linear infinite;">📡</div>
-        Поиск релизов на радаре...
-      </div>
-    `;
+  function loadYears() {
+    if (['games', 'software'].includes(state.category)) {
+      if (yearWrap) yearWrap.style.display = 'none';
+      return;
+    }
+    if (yearWrap) yearWrap.style.display = 'flex';
+    fetch(`/api/years?category=${state.category}`)
+      .then(res => res.json())
+      .then(data => {
+        if (!data.years || !yearSelect) return;
+        const currentYear = state.year;
+        yearSelect.innerHTML = '';
+        
+        const opt26 = document.createElement('option');
+        opt26.value = '2026';
+        opt26.textContent = '2026 год';
+        yearSelect.appendChild(opt26);
+
+        data.years.forEach(y => {
+          if (y != 2026) {
+            const opt = document.createElement('option');
+            opt.value = String(y);
+            opt.textContent = `${y} год`;
+            yearSelect.appendChild(opt);
+          }
+        });
+
+        const optAll = document.createElement('option');
+        optAll.value = 'all';
+        optAll.textContent = 'Все годы';
+        yearSelect.appendChild(optAll);
+
+        yearSelect.value = currentYear || '2026';
+      })
+      .catch(() => {});
+  }
+
+  function fetchReleases(isSilent = false) {
+    if (!isSilent) {
+      cardsGrid.innerHTML = `
+        <div style="grid-column: 1/-1; text-align: center; padding: 60px 0; color: var(--text-muted);">
+          <div style="font-size: 36px; margin-bottom: 12px; animation: spin 1.5s linear infinite;">📡</div>
+          Поиск релизов на радаре...
+        </div>
+      `;
+    }
 
     const params = new URLSearchParams({
       category: state.category,
+      year: state.year,
       days: state.days,
       min_rating: state.min_rating,
       max_size: state.max_size,
@@ -243,7 +308,10 @@ document.addEventListener('DOMContentLoaded', () => {
       params.append('quality', state.qualities.join(','));
     }
 
-    consoleStatusText.textContent = `Запрос релизов (категория: ${state.category}, стр. ${state.page})...`;
+    if (!isSilent) {
+      const yearInfo = (['movies', 'series', 'anime'].includes(state.category)) ? ` (${state.year})` : '';
+      consoleStatusText.textContent = `Запрос релизов (категория: ${state.category}${yearInfo}, стр. ${state.page})...`;
+    }
 
     fetch(`/api/items?${params.toString()}`)
       .then(res => res.json())
@@ -264,10 +332,21 @@ document.addEventListener('DOMContentLoaded', () => {
           cardsGrid.style.display = 'grid';
           emptyState.style.display = 'none';
         }
-        consoleStatusText.textContent = `Найдено ${data.total} релизов (страница ${data.page})`;
+        consoleStatusText.textContent = `Найдено ${data.total} уникальных релизов (${state.year} г., стр. ${data.page})`;
+
+        // Check if any items are missing posters on current page
+        const hasMissingPosters = data.items.some(i => !i.poster_url);
+        if (hasMissingPosters && !posterPollInterval) {
+          posterPollInterval = setTimeout(() => {
+            posterPollInterval = null;
+            fetchReleases(true); // silent re-fetch to load freshly parsed posters
+          }, 2500);
+        }
       })
       .catch(err => {
-        cardsGrid.innerHTML = `<div style="grid-column: 1/-1; color: #ef4444; padding: 40px; text-align: center;">Ошибка загрузки данных: ${err.message}</div>`;
+        if (!isSilent) {
+          cardsGrid.innerHTML = `<div style="grid-column: 1/-1; color: #ef4444; padding: 40px; text-align: center;">Ошибка загрузки данных: ${err.message}</div>`;
+        }
       });
   }
 
@@ -280,7 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const posterHtml = item.poster_url 
         ? `<img class="poster-img" src="${item.poster_url}" alt="${item.title_ru}" loading="lazy" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'poster-placeholder\'>🎬</div>'"/>`
-        : `<div class="poster-placeholder">🎬</div>`;
+        : `<div class="poster-placeholder" style="animation: pulse 1.5s infinite;">⏳ Подгрузка обложки...</div>`;
 
       const ratingBadge = (item.imdb_rating > 0 || item.kp_rating > 0)
         ? `<div class="badge-rating">⭐ ${item.kp_rating || item.imdb_rating}</div>`
@@ -369,6 +448,29 @@ document.addEventListener('DOMContentLoaded', () => {
       `
       : '';
 
+    const alternativesHtml = (item.alternatives && item.alternatives.length > 0)
+      ? `
+        <div class="alternatives-box" style="margin-top: 14px; padding: 12px; background: rgba(0,255,204,0.06); border: 1px solid rgba(0,255,204,0.25); border-radius: 8px;">
+          <h4 style="font-size: 13px; color: var(--accent); margin-bottom: 8px; font-weight: 600;">💾 ДРУГИЕ КАЧЕСТВА И РАЗДАЧИ ЭТОГО ТАЙТЛА (${item.alternatives.length}):</h4>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            ${item.alternatives.map(alt => `
+              <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-card); padding: 8px 12px; border-radius: 6px; font-size: 13px; border: 1px solid var(--border-color);">
+                <div>
+                  <span class="badge-quality" style="position:static; margin-right: 6px; display: inline-block;">${alt.quality || 'HD'}</span>
+                  <strong>${alt.size_str}</strong>
+                  <span style="color: var(--accent); margin-left: 8px;">▲ ${alt.seeds}</span>
+                </div>
+                <div style="display: flex; gap: 6px;">
+                  <a href="${alt.torrent_url}" class="btn-download-torrent" style="padding: 4px 10px; font-size: 12px; text-decoration: none; border-radius: 4px;" target="_blank">⬇ .torrent</a>
+                  ${alt.magnet_url ? `<a href="${alt.magnet_url}" class="btn-magnet" style="padding: 4px 8px; font-size: 12px; text-decoration: none; border-radius: 4px;">🧲</a>` : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `
+      : '';
+
     modalContent.innerHTML = `
       <div class="modal-left">
         ${item.poster_url 
@@ -396,6 +498,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="peers">▼ ${item.peers} пиров</span>
           </div>
         </div>
+
+        ${alternativesHtml}
       </div>
 
       <div class="modal-right">

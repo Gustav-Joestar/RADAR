@@ -54,6 +54,8 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             self.send_json({"logs": get_logs()})
         elif path == "/api/genres":
             self.handle_api_genres(params)
+        elif path == "/api/years":
+            self.handle_api_years(params)
         else:
             self.send_error(404, "Not Found")
 
@@ -64,14 +66,17 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length).decode("utf-8") if length > 0 else ""
             category = "movies"
+            year = 2026
             try:
                 data = json.loads(body) if body else {}
                 category = data.get("category", "movies")
+                y_val = data.get("year", "2026")
+                year = int(y_val) if str(y_val).isdigit() else 0
             except Exception:
                 pass
             
-            threading.Thread(target=tracker_engine.scan_category, args=(category, 3), daemon=True).start()
-            self.send_json({"status": "started", "category": category})
+            threading.Thread(target=tracker_engine.scan_category, args=(category, year, 2), daemon=True).start()
+            self.send_json({"status": "started", "category": category, "year": year})
         else:
             self.send_error(404, "Not Found")
 
@@ -81,6 +86,7 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         min_rating = float(params.get("min_rating", ["0.0"])[0])
         max_size = float(params.get("max_size", ["15.0"])[0])
         genre = params.get("genre", ["all"])[0]
+        year = params.get("year", ["2026"])[0]
         search = params.get("search", [""])[0]
         page = int(params.get("page", ["1"])[0])
         limit = int(params.get("limit", ["15"])[0])
@@ -91,17 +97,29 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         data = database.query_releases(
             category=category, days=days, min_rating=min_rating,
             max_size=max_size, qualities=qualities, genre=genre,
-            search=search, page=page, limit=limit
+            year=year, search=search, page=page, limit=limit,
+            deduplicate=True
         )
 
-        # If 0 results with current strict filter, check if category is empty
+        # If 0 results with current strict filter, check if category is empty for this year
         if data["total"] == 0 and not search and genre == "all":
-            count_all = database.query_releases(category=category, days=0, max_size=0, min_rating=0)["total"]
+            count_all = database.query_releases(category=category, days=0, max_size=0, min_rating=0, year=year)["total"]
             if count_all == 0:
-                log(f"Категория [{category}] пуста в базе. Запуск фонового сбора...", "INFO")
-                threading.Thread(target=tracker_engine.scan_category, args=(category, 3), daemon=True).start()
+                y_scan = int(year) if str(year).isdigit() else 2026
+                log(f"Категория [{category}] ({year}) пуста в базе. Запуск фонового сбора...", "INFO")
+                threading.Thread(target=tracker_engine.scan_category, args=(category, y_scan, 2), daemon=True).start()
+
+        # Auto-queue background details & poster fetch for any items on screen that lack posters
+        missing_posters = [it.get("torrent_id") for it in data["items"] if not it.get("poster_url") and it.get("torrent_id")]
+        if missing_posters:
+            threading.Thread(target=lambda ids: [tracker_engine.parse_full_details(tid) for tid in ids], args=(missing_posters,), daemon=True).start()
 
         self.send_json(data)
+
+    def handle_api_years(self, params):
+        category = params.get("category", ["movies"])[0]
+        years = database.get_distinct_years(category)
+        self.send_json({"years": years})
 
     def handle_api_item(self, params):
         item_id = params.get("id", [""])[0]
@@ -168,9 +186,10 @@ def run_server(port=PORT):
     
     # Auto-scan initial categories if database is fresh
     for cat in ["movies", "series", "anime", "games", "software"]:
-        count = database.query_releases(category=cat, days=0, max_size=0, min_rating=0)["total"]
+        count = database.query_releases(category=cat, days=0, max_size=0, min_rating=0, year="all")["total"]
         if count == 0:
-            threading.Thread(target=tracker_engine.scan_category, args=(cat, 2), daemon=True).start()
+            y_scan = 2026 if cat in ("movies", "series", "anime") else 0
+            threading.Thread(target=tracker_engine.scan_category, args=(cat, y_scan, 2), daemon=True).start()
 
     try:
         server.serve_forever()
