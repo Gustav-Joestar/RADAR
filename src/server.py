@@ -117,8 +117,13 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             if not os.path.exists(poster_path):
                 # Attempt to fetch missing poster directly from torrent page
                 tid_str = os.path.splitext(poster_filename)[0]
+                log(f"🔄 [ПОСТЕР] Загрузка обложки #{tid_str} с торрент-страницы...", "INFO")
                 try:
                     tracker_engine.parse_full_details(int(tid_str))
+                    if os.path.exists(poster_path):
+                        log(f"✅ [ПОСТЕР] Обложка #{tid_str} успешно загружена", "SUCCESS")
+                    else:
+                        log(f"⚠️ [ПОСТЕР] Обложка #{tid_str} не найдена на странице торрента", "WARNING")
                 except Exception as e:
                     log(f"⚠️ Ошибка загрузки постера для #{tid_str}: {e}", "WARNING")
             if os.path.exists(poster_path):
@@ -266,6 +271,7 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         # Auto-queue background details & poster fetch for any items on screen that lack posters
         missing_posters = [it.get("torrent_id") for it in data["items"] if not it.get("poster_url") and it.get("torrent_id")]
         if missing_posters:
+            log(f"🖼️ [ПОСТЕРЫ] Запуск фоновой загрузки обложек для {len(missing_posters)} фильмов...", "INFO")
             threading.Thread(target=lambda ids: [tracker_engine.parse_full_details(tid) for tid in ids], args=(missing_posters,), daemon=True).start()
 
         self.send_json(data)
@@ -359,8 +365,8 @@ def run_server(port=PORT):
     # Auto-fix existing countries in background
     threading.Thread(target=tracker_engine.fix_existing_countries_in_db, daemon=True).start()
 
-    # Auto-enhance missing / low-res movie posters in background
-    threading.Thread(target=tracker_engine.enhance_existing_movie_posters, daemon=True).start()
+    # Disabled: web search enhancements (Bing) that can pull mismatched posters
+    # threading.Thread(target=tracker_engine.enhance_existing_movie_posters, daemon=True).start()
 
     # Auto-cache remote posters locally to disk for 100% offline autonomy
     threading.Thread(target=tracker_engine.download_missing_local_posters, daemon=True).start()

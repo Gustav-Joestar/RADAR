@@ -528,15 +528,23 @@ def parse_full_details(torrent_id):
         magnet_url = magnet_a['href'] if magnet_a else ""
 
         poster_url = ""
-        # Directly take the first image src from details as poster (no size or domain restrictions)
+        # Choose poster from torrent detail page, filtering out icons/badges/thumbnails
+        poster_candidates = []
         for img in details_table.select('img'):
             src = img.get('src', '')
             if not src:
                 continue
             if src.startswith('//'):
                 src = 'https:' + src
-            poster_url = src
-            break
+            poster_candidates.append(src)
+
+        good_candidates = [s for s in poster_candidates if not is_bad_poster(s)]
+        if good_candidates:
+            poster_url = good_candidates[0]
+            log(f"🖼️ [ПОСТЕР] #{torrent_id} выбран постер: {poster_url[:80]}... (из {len(poster_candidates)} картинок, {len(good_candidates)} подходящих)", "DEBUG")
+        elif poster_candidates:
+            poster_url = poster_candidates[0]
+            log(f"⚠️ [ПОСТЕР] #{torrent_id} все {len(poster_candidates)} картинок некачественные, взята первая: {poster_url[:80]}...", "DEBUG")
 
         full_text = details_table.text
 
