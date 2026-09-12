@@ -35,9 +35,6 @@
         <button class="cat-btn" data-category="series">
           <span class="cat-icon">📺</span> Сериалы
         </button>
-        <button class="cat-btn" data-category="anime">
-          <span class="cat-icon">⛩️</span> Аниме
-        </button>
         <button class="cat-btn" data-category="games">
           <span class="cat-icon">🎮</span> Игры
         </button>
@@ -63,11 +60,15 @@
         <span class="refresh-icon">🔄</span> Сканировать трекер
       </button>
 
-      <!-- Search Input -->
+      <!-- Search Input & Button -->
       <div class="filter-group search-group">
         <span class="filter-icon">🔍</span>
-        <input type="text" id="search-input" placeholder="Поиск по названию, актёрам, играм..." />
+        <input type="text" id="search-input" placeholder="Поиск по названию" />
       </div>
+
+      <button id="btn-apply-filters" class="btn-primary btn-apply" title="Применить выбранные фильтры и начать поиск">
+        🔍 Найти
+      </button>
 
       <!-- Quality Filter -->
       <div class="filter-group quality-group" id="quality-filter-wrap">
@@ -88,6 +89,14 @@
         <label class="checkbox-label">
           <input type="checkbox" id="rating-toggle">
           <span>⭐ Рейтинг > 7.0</span>
+        </label>
+      </div>
+
+      <!-- Russian Filter -->
+      <div class="filter-group russian-group" id="russian-filter-wrap">
+        <label class="checkbox-label">
+          <input type="checkbox" id="russian-toggle">
+          <span>Русское</span>
         </label>
       </div>
 

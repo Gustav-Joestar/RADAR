@@ -149,6 +149,21 @@ def scan_next_tracker_page(category_name, year=2026):
     database.advance_crawl_page(category_name, y_val)
     return res
 
+def search_tracker_by_query(query, category_name="movies"):
+    if not query or not query.strip():
+        return 0
+    clean_q = query.strip()
+    encoded_q = urllib.parse.quote(clean_q)
+    cat_ids = CATEGORY_MAP.get(category_name, [1, 5] if category_name == "movies" else [1])
+    urls_to_scan = []
+    for cat_id in cat_ids:
+        urls_to_scan.append(f"http://rutor.info/search/0/{cat_id}/0/0/{encoded_q}")
+    if 0 not in cat_ids:
+        urls_to_scan.append(f"http://rutor.info/search/0/0/0/0/{encoded_q}")
+
+    log(f"🔎 [ОНЛАЙН-ПОИСК] Запрос трекера по названию «{clean_q}»...", "INFO")
+    return _process_tracker_urls(urls_to_scan, category_name, 0)
+
 def _process_tracker_urls(urls_to_scan, category_name, year):
     scanned_torrent_ids = []
     unique_titles_to_fetch = []

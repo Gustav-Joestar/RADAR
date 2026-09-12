@@ -144,23 +144,30 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         search = params.get("search", [""])[0]
         page = int(params.get("page", ["1"])[0])
         limit = int(params.get("limit", ["15"])[0])
+        origin = params.get("origin", ["foreign"])[0]
         qualities = params.get("quality", None)
         if qualities:
             qualities = qualities[0].split(",") if isinstance(qualities[0], str) else qualities
 
         q_desc = ",".join(qualities) if qualities else "любое"
         y_desc = "все годы" if year == "all" else f"{year} г."
-        log(f"📡 [РАДАР] Запрос витрины [{category}], {y_desc}, жанр: {genre}, рейтинг: >={min_rating}, качество: {q_desc}, стр. {page}", "INFO")
+        log(f"📡 [РАДАР] Запрос витрины [{category}], {y_desc}, происхождение: {origin}, жанр: {genre}, рейтинг: >={min_rating}, качество: {q_desc}, стр. {page}", "INFO")
+
+        # If user is searching by title/query, perform deep search on tracker archive
+        if search and search.strip():
+            local_matches = database.query_releases(category=category, search=search, limit=1, origin=origin)
+            if local_matches['total'] < 3:
+                tracker_engine.search_tracker_by_query(search, category)
 
         data = database.query_releases(
             category=category, min_rating=min_rating,
             max_size=max_size, qualities=qualities, genre=genre,
             year=year, search=search, page=page, limit=limit,
-            deduplicate=True
+            deduplicate=True, origin=origin
         )
 
         # Auto-backfill to fill page up to limit (15 items) if filtered results are sparse
-        if len(data["items"]) < limit and not search and category in ("movies", "series", "anime"):
+        if len(data["items"]) < limit and not search and category in ("movies", "series"):
             y_scan = int(year) if str(year).isdigit() else 0
             log(f"🔄 [АВТО-ДОПОДГРУЗКА] Найдено {len(data['items'])}/{limit} релизов. Сканирование трекера для пополнения страницы...", "INFO")
             for _ in range(2):
@@ -171,7 +178,7 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
                     category=category, min_rating=min_rating,
                     max_size=max_size, qualities=qualities, genre=genre,
                     year=year, search=search, page=page, limit=limit,
-                    deduplicate=True
+                    deduplicate=True, origin=origin
                 )
                 if len(data["items"]) >= limit:
                     break

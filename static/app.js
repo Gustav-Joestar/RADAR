@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     max_size: 999.0,
     qualities: ['1080p', '720p'],
     genre: 'all',
+    origin: 'foreign',
     search: '',
     page: 1,
     limit: 15,
@@ -26,8 +27,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnPrev = document.getElementById('btn-prev');
   const btnNext = document.getElementById('btn-next');
   const btnRefresh = document.getElementById('btn-refresh');
+  const btnApplyFilters = document.getElementById('btn-apply-filters');
   const ratingToggle = document.getElementById('rating-toggle');
   const ratingWrap = document.getElementById('rating-filter-wrap');
+  const russianToggle = document.getElementById('russian-toggle');
+  const russianWrap = document.getElementById('russian-filter-wrap');
   const qualityWrap = document.getElementById('quality-filter-wrap');
   const yearWrap = document.getElementById('year-filter-wrap');
   const yearSelect = document.getElementById('year-select');
@@ -65,11 +69,19 @@ document.addEventListener('DOMContentLoaded', () => {
     state.min_rating = parseFloat(urlParams.get('rating'));
     if (ratingToggle) ratingToggle.checked = state.min_rating > 0;
   }
+  if (urlParams.has('origin')) {
+    state.origin = urlParams.get('origin');
+    if (russianToggle) russianToggle.checked = state.origin === 'russian';
+  }
+  if (urlParams.has('search')) {
+    state.search = urlParams.get('search');
+    if (searchInput) searchInput.value = state.search;
+  }
   if (urlParams.has('page')) {
     state.page = parseInt(urlParams.get('page')) || 1;
   }
   const initialTab = urlParams.get('tab') || window.location.hash.replace('#', '');
-  if (initialTab && ['watchlist', 'ignored', 'movies', 'series', 'anime', 'games', 'software'].includes(initialTab)) {
+  if (initialTab && ['watchlist', 'ignored', 'movies', 'series', 'games', 'software'].includes(initialTab)) {
     const targetBtn = document.querySelector(`.cat-btn[data-category="${initialTab}"]`);
     if (targetBtn) {
       targetBtn.click();
@@ -94,22 +106,25 @@ document.addEventListener('DOMContentLoaded', () => {
         state.page = 1;
 
         if (state.category === 'watchlist' || state.category === 'ignored') {
-          ratingWrap.style.display = 'none';
-          qualityWrap.style.display = 'none';
-          yearWrap.style.display = 'none';
+          if (ratingWrap) ratingWrap.style.display = 'none';
+          if (qualityWrap) qualityWrap.style.display = 'none';
+          if (yearWrap) yearWrap.style.display = 'none';
           if (genreWrap) genreWrap.style.display = 'none';
+          if (russianWrap) russianWrap.style.display = 'none';
         } else if (state.category === 'games' || state.category === 'software') {
-          ratingWrap.style.display = 'none';
-          qualityWrap.style.display = 'none';
-          yearWrap.style.display = 'none';
+          if (ratingWrap) ratingWrap.style.display = 'none';
+          if (qualityWrap) qualityWrap.style.display = 'none';
+          if (yearWrap) yearWrap.style.display = 'none';
           if (genreWrap) genreWrap.style.display = 'flex';
+          if (russianWrap) russianWrap.style.display = 'none';
           state.min_rating = 0.0;
         } else {
-          ratingWrap.style.display = 'flex';
-          qualityWrap.style.display = 'flex';
-          yearWrap.style.display = 'flex';
+          if (ratingWrap) ratingWrap.style.display = 'flex';
+          if (qualityWrap) qualityWrap.style.display = 'flex';
+          if (yearWrap) yearWrap.style.display = 'flex';
           if (genreWrap) genreWrap.style.display = 'flex';
-          state.min_rating = ratingToggle.checked ? 7.0 : 0.0;
+          if (russianWrap) russianWrap.style.display = 'flex';
+          state.min_rating = ratingToggle && ratingToggle.checked ? 7.0 : 0.0;
         }
 
         if (!['watchlist', 'ignored'].includes(state.category)) {
@@ -120,55 +135,20 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
 
-    // Year Dropdown
-    if (yearSelect) {
-      yearSelect.addEventListener('change', (e) => {
-        state.year = e.target.value;
-        state.page = 1;
-        fetchReleases();
-      });
+    // Apply Filters Button
+    if (btnApplyFilters) {
+      btnApplyFilters.addEventListener('click', applyFilters);
     }
 
-    // Quality Checkboxes
-    ['q-1080p', 'q-720p', 'q-4k'].forEach(id => {
-      const cb = document.getElementById(id);
-      if (cb) {
-        cb.addEventListener('change', () => {
-          const active = [];
-          if (document.getElementById('q-1080p').checked) active.push('1080p');
-          if (document.getElementById('q-720p').checked) active.push('720p');
-          if (document.getElementById('q-4k').checked) active.push('4K');
-          state.qualities = active;
-          state.page = 1;
-          fetchReleases();
-        });
-      }
-    });
-
-    // Rating Toggle
-    ratingToggle.addEventListener('change', (e) => {
-      state.min_rating = e.target.checked ? 7.0 : 0.0;
-      state.page = 1;
-      fetchReleases();
-    });
-
-    // Genre Select
-    genreSelect.addEventListener('change', (e) => {
-      state.genre = e.target.value;
-      state.page = 1;
-      fetchReleases();
-    });
-
-    // Search Input Debounce
-    let searchTimeout = null;
-    searchInput.addEventListener('input', (e) => {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => {
-        state.search = e.target.value;
-        state.page = 1;
-        fetchReleases();
-      }, 350);
-    });
+    // Search Input: Apply on Enter
+    if (searchInput) {
+      searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          applyFilters();
+        }
+      });
+    }
 
     // Reset Filters
     btnReset.addEventListener('click', resetFilters);
@@ -244,18 +224,25 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function applyFilters() {
+    state.page = 1;
+    fetchReleases();
+  }
+
   function resetFilters() {
     state.year = 'all';
     state.min_rating = 0.0;
     state.max_size = 999.0;
     state.qualities = ['1080p', '720p'];
     state.genre = 'all';
+    state.origin = 'foreign';
     state.search = '';
     state.page = 1;
 
     if (yearSelect) yearSelect.value = 'all';
     if (searchInput) searchInput.value = '';
     if (ratingToggle) ratingToggle.checked = false;
+    if (russianToggle) russianToggle.checked = false;
     if (genreSelect) genreSelect.value = 'all';
 
     const q1080 = document.getElementById('q-1080p');
@@ -397,12 +384,25 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     }
 
+    if (russianToggle) state.origin = russianToggle.checked ? 'russian' : 'foreign';
+    if (yearSelect) state.year = yearSelect.value;
+    if (genreSelect) state.genre = genreSelect.value;
+    if (ratingToggle) state.min_rating = ratingToggle.checked ? 7.0 : 0.0;
+    if (searchInput) state.search = searchInput.value.trim();
+
+    const activeQualities = [];
+    if (document.getElementById('q-1080p')?.checked) activeQualities.push('1080p');
+    if (document.getElementById('q-720p')?.checked) activeQualities.push('720p');
+    if (document.getElementById('q-4k')?.checked) activeQualities.push('4K');
+    state.qualities = activeQualities;
+
     const params = new URLSearchParams({
       category: state.category,
       year: state.year,
       min_rating: state.min_rating,
       max_size: state.max_size,
       genre: state.genre,
+      origin: state.origin,
       search: state.search,
       page: state.page,
       limit: state.limit
@@ -413,8 +413,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (!isSilent) {
-      const yearInfo = (['movies', 'series', 'anime'].includes(state.category)) ? ` (${state.year})` : '';
-      consoleStatusText.textContent = `Запрос релизов (категория: ${state.category}${yearInfo}, стр. ${state.page})...`;
+      const yearInfo = (['movies', 'series'].includes(state.category)) ? ` (${state.year === 'all' ? 'все годы' : state.year})` : '';
+      const origInfo = state.origin === 'russian' ? ' [Русское]' : '';
+      consoleStatusText.textContent = `Запрос релизов (категория: ${state.category}${yearInfo}${origInfo}, стр. ${state.page})...`;
     }
 
     fetch(`/api/items?${params.toString()}`)
@@ -454,68 +455,13 @@ document.addEventListener('DOMContentLoaded', () => {
       });
   }
 
-  const COUNTRY_FLAGS = {
-    'россия': '🇷🇺',
-    'рф': '🇷🇺',
-    'ссср': '🇷🇺',
-    'сша': '🇺🇸',
-    'usa': '🇺🇸',
-    'великобритания': '🇬🇧',
-    'британия': '🇬🇧',
-    'канада': '🇨🇦',
-    'франция': '🇫🇷',
-    'германия': '🇩🇪',
-    'италия': '🇮🇹',
-    'испания': '🇪🇸',
-    'япония': '🇯🇵',
-    'корея южная': '🇰🇷',
-    'южная корея': '🇰🇷',
-    'корея': '🇰🇷',
-    'китай': '🇨🇳',
-    'гонконг': '🇭🇰',
-    'тайвань': '🇹🇼',
-    'австралия': '🇦🇺',
-    'индия': '🇮🇳',
-    'венгрия': '🇭🇺',
-    'польша': '🇵🇱',
-    'швеция': '🇸🇪',
-    'норвегия': '🇳🇴',
-    'дания': '🇩🇰',
-    'финляндия': '🇫🇮',
-    'бельгия': '🇧🇪',
-    'нидерланды': '🇳🇱',
-    'мексика': '🇲🇽',
-    'бразилия': '🇧🇷',
-    'аргентина': '🇦🇷',
-    'индонезия': '🇮🇩',
-    'турция': '🇹🇷',
-    'юар': '🇿🇦',
-    'ирландия': '🇮🇪',
-    'чехия': '🇨🇿',
-    'австрия': '🇦🇹',
-    'швейцария': '🇨🇭',
-    'греция': '🇬🇷',
-    'таиланд': '🇹🇭',
-    'новая зеландия': '🇳🇿'
-  };
-
   function formatCountryBadge(countryStr) {
     if (!countryStr || typeof countryStr !== 'string') return '';
     const clean = countryStr.split(/[,/|;]/)[0].trim();
     if (!clean) return '';
-    const lower = clean.toLowerCase();
-    let flag = '🌍';
-    for (const [name, emoji] of Object.entries(COUNTRY_FLAGS)) {
-      if (lower.includes(name)) {
-        flag = emoji;
-        break;
-      }
-    }
     return `
       <div class="card-country-box">
-        <span class="card-country" title="${countryStr}">
-          <span>${flag}</span> ${clean}
-        </span>
+        <span class="card-country-text" title="${countryStr}">${clean}</span>
       </div>
     `;
   }
@@ -526,6 +472,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const card = document.createElement('div');
       card.className = 'media-card';
       card.id = `card-${item.torrent_id}`;
+      card.dataset.titleRu = (item.title_ru || '').trim().toLowerCase();
       card.onclick = () => openModal(item.torrent_id);
 
       const posterHtml = item.poster_url 
@@ -540,6 +487,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ratingBadges += `<div class="badge-rating imdb-badge" title="IMDb">IMDb ${item.imdb_rating}</div>`;
       }
 
+      const escapedTitle = (item.title_ru || '').replace(/'/g, "\\'");
       let hoverActionsHtml = '';
       if (isWatchlist) {
         hoverActionsHtml = `
@@ -552,10 +500,10 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         hoverActionsHtml = `
           <div class="card-hover-actions">
-            <button class="btn-card-action btn-card-watch" onclick="event.stopPropagation(); addToWatchlist('${item.torrent_id}')">
+            <button class="btn-card-action btn-card-watch" onclick="event.stopPropagation(); addToWatchlist('${item.torrent_id}', '${escapedTitle}')">
               💚 Буду смотреть
             </button>
-            <button class="btn-card-action btn-card-ignore" onclick="event.stopPropagation(); addToIgnored('${item.torrent_id}')">
+            <button class="btn-card-action btn-card-ignore" onclick="event.stopPropagation(); addToIgnored('${item.torrent_id}', '${escapedTitle}')">
               🚫 Не буду смотреть
             </button>
           </div>
@@ -615,12 +563,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Global actions for card hover and buttons
-  window.addToWatchlist = function(torrentId) {
-    const card = document.getElementById(`card-${torrentId}`);
-    if (card) {
-      card.classList.add('card-removing');
-      setTimeout(() => card.remove(), 260);
-    }
+  window.addToWatchlist = function(torrentId, titleRu) {
+    const cleanTitle = (titleRu || '').trim().toLowerCase();
+    const cards = document.querySelectorAll('.media-card');
+    cards.forEach(c => {
+      if (c.id === `card-${torrentId}` || (cleanTitle && c.dataset.titleRu === cleanTitle)) {
+        c.classList.add('card-removing');
+        setTimeout(() => c.remove(), 260);
+      }
+    });
     fetch('/api/watchlist/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -631,12 +582,15 @@ document.addEventListener('DOMContentLoaded', () => {
     .catch(() => {});
   };
 
-  window.addToIgnored = function(torrentId) {
-    const card = document.getElementById(`card-${torrentId}`);
-    if (card) {
-      card.classList.add('card-removing');
-      setTimeout(() => card.remove(), 260);
-    }
+  window.addToIgnored = function(torrentId, titleRu) {
+    const cleanTitle = (titleRu || '').trim().toLowerCase();
+    const cards = document.querySelectorAll('.media-card');
+    cards.forEach(c => {
+      if (c.id === `card-${torrentId}` || (cleanTitle && c.dataset.titleRu === cleanTitle)) {
+        c.classList.add('card-removing');
+        setTimeout(() => c.remove(), 260);
+      }
+    });
     fetch('/api/ignored/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -766,10 +720,10 @@ document.addEventListener('DOMContentLoaded', () => {
         
         <!-- Modal Quick Actions -->
         <div style="display: flex; gap: 8px; margin: 10px 0;">
-          <button class="btn-card-action btn-card-watch" style="flex:1;" onclick="addToWatchlist('${item.torrent_id}'); closeModal();">
+          <button class="btn-card-action btn-card-watch" style="flex:1;" onclick="addToWatchlist('${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\'")}'); closeModal();">
             💚 Буду смотреть
           </button>
-          <button class="btn-card-action btn-card-ignore" style="flex:1;" onclick="addToIgnored('${item.torrent_id}'); closeModal();">
+          <button class="btn-card-action btn-card-ignore" style="flex:1;" onclick="addToIgnored('${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\'")}'); closeModal();">
             🚫 Не буду
           </button>
         </div>

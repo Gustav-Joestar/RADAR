@@ -190,12 +190,18 @@ def clear_cache():
 
 def query_releases(category="movies", min_rating=0.0, max_size=15.0,
                    qualities=None, genre=None, year="2026", search=None,
-                   page=1, limit=15, deduplicate=True, days=0):
+                   page=1, limit=15, deduplicate=True, days=0, origin="all"):
     conn = get_connection()
     c = conn.cursor()
 
     conditions = ["category = ?", "(user_status IS NULL OR user_status = 'new')"]
     params = [category]
+
+    # Origin filter (Russian vs Foreign vs All)
+    if origin == "russian":
+        conditions.append("(country LIKE '%Россия%' OR country LIKE '%СССР%' OR country LIKE '%РФ%' OR category = 'nashe_kino')")
+    elif origin == "foreign":
+        conditions.append("(country NOT LIKE '%Россия%' AND country NOT LIKE '%СССР%' AND country NOT LIKE '%РФ%' AND category != 'nashe_kino')")
 
     # Year filter
     if year and str(year) != "all":
@@ -289,8 +295,21 @@ def query_releases(category="movies", min_rating=0.0, max_size=15.0,
 def add_to_watchlist(torrent_id):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("UPDATE releases SET user_status = 'watchlist', updated_at = ? WHERE torrent_id = ?",
-              (int(time.time()), str(torrent_id)))
+    c.execute("SELECT title_ru, year FROM releases WHERE torrent_id = ?", (str(torrent_id),))
+    row = c.fetchone()
+    if row and row['title_ru']:
+        title_ru = row['title_ru']
+        year = row['year']
+        c.execute("UPDATE releases SET user_status = 'watchlist', updated_at = ? WHERE torrent_id = ?",
+                  (int(time.time()), str(torrent_id)))
+        # Hide duplicate releases of this same movie from the discovery feed
+        c.execute("""
+            UPDATE releases SET user_status = 'watchlist_alt', updated_at = ?
+            WHERE LOWER(TRIM(title_ru)) = LOWER(TRIM(?)) AND year = ? AND torrent_id != ?
+        """, (int(time.time()), title_ru, year, str(torrent_id)))
+    else:
+        c.execute("UPDATE releases SET user_status = 'watchlist', updated_at = ? WHERE torrent_id = ?",
+                  (int(time.time()), str(torrent_id)))
     conn.commit()
     conn.close()
 
@@ -334,6 +353,8 @@ def add_to_ignored(torrent_id):
     c.execute("SELECT * FROM releases WHERE torrent_id = ?", (str(torrent_id),))
     row = c.fetchone()
     if row:
+        title_ru = row['title_ru']
+        year = row['year']
         c.execute("""
             INSERT OR REPLACE INTO ignored_releases 
             (torrent_id, category, title, title_ru, title_en, year, genre, kp_rating, imdb_rating, created_at)
@@ -345,6 +366,10 @@ def add_to_ignored(torrent_id):
         ))
         # Remove heavy record from releases to clear cache
         c.execute("DELETE FROM releases WHERE torrent_id = ?", (str(torrent_id),))
+        # Purge all duplicate releases of the exact same title/year from cache
+        if title_ru:
+            c.execute("DELETE FROM releases WHERE LOWER(TRIM(title_ru)) = LOWER(TRIM(?)) AND year = ?",
+                      (title_ru, year))
         conn.commit()
     conn.close()
 
