@@ -267,21 +267,29 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
                 deduplicate=True, origin=origin
             )
 
-        # If in movies/series discovery feed and we have fewer than limit rated releases, resolve more from DB
-        if category in ("movies", "series") and page == 1 and not search and len(data["items"]) < limit:
+        # In discovery feed (movies, series, anime without search), ensure requested page is filled up to `limit`
+        if category in ("movies", "series", "anime") and not search and len(data["items"]) < limit:
             conn = database.get_connection()
             c = conn.cursor()
-            c.execute("""
+            origin_filter = ""
+            if origin == "russian":
+                origin_filter = "AND (country LIKE '%Россия%' OR country LIKE '%СССР%' OR country LIKE '%РФ%')"
+            elif origin == "foreign":
+                origin_filter = "AND (country != '' OR title_en != '' OR title LIKE '%/%') AND country NOT LIKE '%Россия%' AND country NOT LIKE '%СССР%' AND country NOT LIKE '%РФ%'"
+
+            needed = max(limit - len(data["items"]), 5)
+            c.execute(f"""
                 SELECT torrent_id FROM releases 
                 WHERE category = ? AND kp_rating = 0.0 AND imdb_rating = 0.0
                   AND (description IS NULL OR description = '')
+                  {origin_filter}
                 ORDER BY date_ts DESC LIMIT ?
-            """, (category, 10))
+            """, (category, needed * 2))
             unparsed = [r["torrent_id"] for r in c.fetchall()]
             conn.close()
             if unparsed:
                 from concurrent.futures import ThreadPoolExecutor
-                with ThreadPoolExecutor(max_workers=5) as executor:
+                with ThreadPoolExecutor(max_workers=8) as executor:
                     list(executor.map(tracker_engine.parse_full_details, unparsed))
                 data = database.query_releases(
                     category=category, min_rating=min_rating,
@@ -289,6 +297,22 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
                     year=year, search=search, page=page, limit=limit,
                     deduplicate=True, origin=origin
                 )
+
+            # If still fewer than limit (e.g. on page 2, 3... or DB ran out of unparsed), crawl next tracker page
+            if len(data["items"]) < limit:
+                y_scan = int(year) if str(year).isdigit() else 0
+                log(f"📡 [РАДАР] Недостаточно релизов для стр. {page} ({len(data['items'])}/{limit}). Подгрузка с трекера...", "INFO")
+                tracker_engine.scan_next_tracker_page(category, y_scan)
+                data = database.query_releases(
+                    category=category, min_rating=min_rating,
+                    max_size=max_size, qualities=qualities, genre=genre,
+                    year=year, search=search, page=page, limit=limit,
+                    deduplicate=True, origin=origin
+                )
+
+        # In discovery mode, tracker always has more pages available for pagination
+        if category in ("movies", "series", "anime") and not search:
+            data["pages"] = max(data["pages"], page + 1)
 
         # Check if any items on the current page need their full details parsed (never parsed before)
         needs_details = [

@@ -592,11 +592,11 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
     cached_count = len(scanned_torrent_ids) - len(unique_titles_to_fetch)
     log(f"Категория [{category_name}]: {len(scanned_torrent_ids)} раздач найдено ({cached_count} из кэша, {len(unique_titles_to_fetch)} новых).", "INFO")
     
-    # Priority 1: Immediately fetch details, ratings and local posters for the top candidates
-    candidates = unique_titles_to_fetch[:20]
+    # Priority 1: Immediately fetch details, ratings and local posters for top candidates
+    candidates = unique_titles_to_fetch[:35]
     if candidates:
         log(f"⚡ [РЕЙТИНГИ И ОБЛОЖКИ] Загрузка данных и рейтингов для {len(candidates)} релизов витрины...", "INFO")
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=10) as executor:
             list(executor.map(parse_full_details, candidates))
         log(f"✅ [РЕЙТИНГИ И ОБЛОЖКИ] Витрина первой страницы полностью готова!", "SUCCESS")
 
@@ -617,10 +617,27 @@ GENRES_DICTIONARY = [
     'мюзикл', 'спорт'
 ]
 
+def extract_kinopoisk_id(html):
+    """Extract Kinopoisk film/series ID from HTML text (links, badges, XML tags)."""
+    if not html:
+        return None
+    patterns = [
+        r'rating\.kinopoisk\.ru/(\d+)\.gif',
+        r'kinopoisk\.ru/rating/(\d+)\.gif',
+        r'kinopoisk\.ru/(?:film/|level/1/film/|series/)(\d+)',
+        r'kinopoisk\.ru/(?:film|series)/(\d+)',
+        r'kinopoisk\.ru/[^\s"\'<>]*?[?&]id=(\d+)'
+    ]
+    for pat in patterns:
+        m = re.search(pat, html, re.I)
+        if m and len(m.group(1)) >= 2:
+            return m.group(1)
+    return None
+
 RATINGS_SEARCH_CACHE = {}
 
 def fetch_ratings_by_search(title_ru, title_en="", year=0):
-    """Search Kinopoisk ID and XML ratings by title + year via Yahoo and DuckDuckGo."""
+    """Search Kinopoisk ID and XML ratings by title + year (fast, non-blocking)."""
     cache_key = (title_ru.lower().strip() if title_ru else "", year or 0)
     if cache_key in RATINGS_SEARCH_CACHE:
         return RATINGS_SEARCH_CACHE[cache_key]
@@ -632,48 +649,20 @@ def fetch_ratings_by_search(title_ru, title_en="", year=0):
     queries = []
     if title_ru and year:
         queries.append(f"кинопоиск {title_ru} {year}")
-    if title_ru:
+    elif title_ru:
         queries.append(f"кинопоиск {title_ru}")
     if title_en and year and title_en.lower() != title_ru.lower():
         queries.append(f"kinopoisk {title_en} {year}")
-    if title_en and title_en.lower() != title_ru.lower():
-        queries.append(f"kinopoisk {title_en}")
 
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    for q in queries:
-        # 1. Primary engine: Yahoo Search (fast, reliable, no rate-limiting)
+    for q in queries[:2]:
         try:
-            url_yahoo = f"https://search.yahoo.com/search?p={urllib.parse.quote(q)}"
-            r_yahoo = requests.get(url_yahoo, impersonate='chrome124', timeout=3, headers=headers)
-            matches = re.findall(r'kinopoisk\.ru/film/(\d+)', r_yahoo.text)
-            if matches:
-                cand_id = matches[0]
-                r_xml = requests.get(f"https://rating.kinopoisk.ru/{cand_id}.xml", timeout=3)
-                if r_xml.status_code == 200:
-                    km = re.search(r'<kp_rating[^>]*>([\d\.]+)</kp_rating>', r_xml.text)
-                    im = re.search(r'<imdb_rating[^>]*>([\d\.]+)</imdb_rating>', r_xml.text)
-                    if km and float(km.group(1)) > 0:
-                        kp_rating = round(float(km.group(1)), 1)
-                    if im and float(im.group(1)) > 0:
-                        imdb_rating = round(float(im.group(1)), 1)
-                    kp_id = cand_id
-                    if kp_rating > 0 or imdb_rating > 0:
-                        break
-        except Exception:
-            pass
-
-        if kp_rating > 0 or imdb_rating > 0:
-            break
-
-        # 2. Secondary engine: DuckDuckGo
-        try:
-            url_ddg = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(q)}"
-            r_ddg = requests.get(url_ddg, impersonate='chrome124', timeout=3)
-            m = re.search(r'kinopoisk\.ru/film/(\d+)', r_ddg.text)
-            if m:
-                cand_id = m.group(1)
-                r_xml = requests.get(f"https://rating.kinopoisk.ru/{cand_id}.xml", timeout=3)
+            url_bing = f"https://www.bing.com/search?q={urllib.parse.quote(q)}"
+            r_bing = requests.get(url_bing, impersonate='chrome124', timeout=1.5, headers=headers)
+            cand_id = extract_kinopoisk_id(r_bing.text)
+            if cand_id:
+                r_xml = requests.get(f"https://rating.kinopoisk.ru/{cand_id}.xml", timeout=1.5)
                 if r_xml.status_code == 200:
                     km = re.search(r'<kp_rating[^>]*>([\d\.]+)</kp_rating>', r_xml.text)
                     im = re.search(r'<imdb_rating[^>]*>([\d\.]+)</imdb_rating>', r_xml.text)
@@ -691,8 +680,8 @@ def fetch_ratings_by_search(title_ru, title_en="", year=0):
             break
 
     result = (kp_rating, imdb_rating, kp_id)
-    if kp_rating > 0 or imdb_rating > 0:
-        RATINGS_SEARCH_CACHE[cache_key] = result
+    # Always cache result (even if 0) so we never repeat slow lookups for the same movie
+    RATINGS_SEARCH_CACHE[cache_key] = result
     return result
 
 def backfill_missing_ratings(limit=30):
@@ -896,16 +885,14 @@ def parse_full_details(torrent_id):
                 description = parts[0].strip()
             description = re.sub(rf'\s*(?:{STOP_METADATA_FIELDS})\s*:[^\n\r]+', '', description, flags=re.IGNORECASE).strip()
 
-        # 1. Fetch ratings from Kinopoisk and IMDb, and use Kinopoisk poster as fallback
+        # 1. Fetch ratings from Kinopoisk XML (ultra-fast 0.16s via rating.kinopoisk.ru)
         kp_rating = 0.0
         imdb_rating = 0.0
-        kp_id = None
+        kp_id = extract_kinopoisk_id(html)
 
-        kp_m = re.search(r'kinopoisk\.ru/film/(\d+)', html)
-        if kp_m:
-            kp_id = kp_m.group(1)
+        if kp_id:
             try:
-                r_kp = requests.get(f'https://rating.kinopoisk.ru/{kp_id}.xml', timeout=4)
+                r_kp = requests.get(f'https://rating.kinopoisk.ru/{kp_id}.xml', timeout=2)
                 if r_kp.status_code == 200:
                     km = re.search(r'<kp_rating[^>]*>([\d\.]+)</kp_rating>', r_kp.text)
                     im = re.search(r'<imdb_rating[^>]*>([\d\.]+)</imdb_rating>', r_kp.text)
@@ -918,13 +905,31 @@ def parse_full_details(torrent_id):
 
         # Text fallback if ratings are still 0
         if imdb_rating == 0.0:
-            imdb_m = re.search(r'IMDb[:\s*]+(\d+(?:\.\d+)?)\s*(?:/\s*10)?', full_text, re.IGNORECASE)
-            if imdb_m:
-                imdb_rating = round(float(imdb_m.group(1)), 1)
+            for pat in [
+                r'IMDb[:\s*]+([0-9](?:\.[0-9])?)\s*(?:/\s*10)?',
+                r'IMDB\s*[:\-]?\s*([0-9]\.[0-9])',
+                r'rating[:\s]+([0-9]\.[0-9])\s*(?:/\s*10)?\s*\(IMDb\)'
+            ]:
+                imdb_m = re.search(pat, full_text, re.IGNORECASE)
+                if imdb_m:
+                    try:
+                        imdb_rating = round(float(imdb_m.group(1)), 1)
+                        break
+                    except Exception:
+                        pass
+
         if kp_rating == 0.0:
-            kp_txt_m = re.search(r'(?:Кинопоиск|Kinopoisk|КП)[:\s*]+(\d+(?:\.\d+)?)\s*(?:/\s*10)?', full_text, re.IGNORECASE)
-            if kp_txt_m:
-                kp_rating = round(float(kp_txt_m.group(1)), 1)
+            for pat in [
+                r'(?:Кинопоиск|Kinopoisk|КП)[:\s*]+([0-9](?:\.[0-9])?)\s*(?:/\s*10)?',
+                r'Кинопоиск\s*[:\-]?\s*([0-9]\.[0-9])'
+            ]:
+                kp_txt_m = re.search(pat, full_text, re.IGNORECASE)
+                if kp_txt_m:
+                    try:
+                        kp_rating = round(float(kp_txt_m.group(1)), 1)
+                        break
+                    except Exception:
+                        pass
 
         # Existing DB record for title/year info
         existing = database.get_release_by_id(torrent_id)
@@ -934,12 +939,12 @@ def parse_full_details(torrent_id):
         t_en = existing.get("title_en") if existing else ""
         r_year = existing.get("year") if existing else 0
 
-        # Automatic web search fallback if ratings are missing
-        if kp_rating == 0.0 or imdb_rating == 0.0:
+        # Fast search fallback only if both ratings are still 0
+        if kp_rating == 0.0 and imdb_rating == 0.0:
             s_kp, s_imdb, s_kpid = fetch_ratings_by_search(t_ru, t_en, r_year)
-            if kp_rating == 0.0 and s_kp > 0:
+            if s_kp > 0:
                 kp_rating = s_kp
-            if imdb_rating == 0.0 and s_imdb > 0:
+            if s_imdb > 0:
                 imdb_rating = s_imdb
             if not kp_id and s_kpid:
                 kp_id = s_kpid

@@ -209,19 +209,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     btnNext.addEventListener('click', () => {
-      if (state.page >= state.totalPages) return;
+      const isDiscovery = !['watchlist', 'ignored'].includes(state.category) && !state.search;
+      if (!isDiscovery && state.page >= state.totalPages) return;
       state.page++;
       fetchReleases();
       window.scrollTo({ top: 0, behavior: 'smooth' });
-
-      // In discovery mode, automatically trigger crawl of next tracker page in background
-      if (!['watchlist', 'ignored'].includes(state.category)) {
-        fetch('/api/scan_more', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ category: state.category, year: state.year })
-        }).catch(() => {});
-      }
     });
 
     // Modal Close
@@ -490,13 +482,14 @@ document.addEventListener('DOMContentLoaded', () => {
       .then(res => res.json())
       .then(data => {
         renderCards(data.items, false);
-        state.totalPages = data.pages;
+        const isDiscovery = !['watchlist', 'ignored'].includes(state.category) && !state.search;
+        state.totalPages = isDiscovery ? Math.max(data.pages || 1, data.page + 1) : (data.pages || 1);
         currentPageSpan.textContent = data.page;
         totalPagesSpan.textContent = state.totalPages;
         resultsCount.textContent = `Найдено релизов: ${data.total} (показано ${data.items.length})`;
 
         btnPrev.disabled = data.page <= 1;
-        btnNext.disabled = data.page >= state.totalPages || data.total <= data.page * data.limit;
+        btnNext.disabled = isDiscovery ? (data.items.length === 0) : (data.page >= state.totalPages);
 
         if (data.total === 0) {
           cardsGrid.style.display = 'none';
