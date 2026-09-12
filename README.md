@@ -40,29 +40,25 @@
 
 ## 🚀 Установка и запуск
 
-1. Склонируйте репозиторий:
+1. **Клонирование репозитория:**
    ```bash
    git clone https://github.com/<username>/RADAR.git
    cd RADAR
    ```
 
-2. Установите зависимости:
-   ```bash
-   pip install curl_cffi beautifulsoup4
-   ```
+2. **Автоматическая установка:**
+   Просто запустите файл **`install.bat`**:
+   * Он автоматически создаст изолированное виртуальное окружение `.venv`.
+   * Обновит `pip` и установит все необходимые библиотеки из `requirements.txt`.
 
-3. Запустите приложение:
-   * Двойным кликом по `run_radar.bat` (или через ярлык на Рабочем столе).
-   * Либо командой:
-     ```bash
-     python launcher.py
-     ```
-   Приложение откроется в вашем браузере по адресу: `http://127.0.0.1:8765`.
+3. **Запуск приложения:**
+   * Запустите **`run_radar.bat`** (или ярлык на Рабочем столе).
+   * Приложение автоматически откроется в вашем браузере по адресу `http://127.0.0.1:8765`.
 
 ---
 
 ## 🛠️ Стек технологий
 
-* **Backend:** Python 3.12, SQLite (`radar.db`), `curl_cffi` (обход Cloudflare), `BeautifulSoup4`.
+* **Backend:** Python 3.10+, SQLite (`radar.db`), `curl_cffi` (обход Cloudflare), `BeautifulSoup4`.
 * **Frontend:** HTML5, CSS3 (Modern Glassmorphism Dark Theme), Vanilla JavaScript.
 * **Архитектура:** Single-Page Application (SPA) с локальным REST API.
