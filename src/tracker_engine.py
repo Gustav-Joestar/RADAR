@@ -58,6 +58,7 @@ def fetch_web_poster(title_ru, year=0, original_title=""):
         q_parts.append(str(year))
     q_parts.append("постер фильм")
 
+    # Updated fetch_web_poster with height constraint (≤480px)
     query = " ".join(q_parts)
     q_enc = urllib.parse.quote(query)
     # Strictly vertical portrait aspect ratio filter
@@ -69,7 +70,7 @@ def fetch_web_poster(title_ru, year=0, original_title=""):
     try:
         r = requests.get(url, headers=headers, impersonate='chrome124', timeout=6)
         html = r.text
-        murls = re.findall(r'murl&quot;:&quot;(https?://[^&]+)&quot;', html)
+        murls = re.findall(r'murl\u0026quot;:\u0026quot;(https?://[^\u0026]+)\u0026quot;', html)
         if not murls:
             murls = re.findall(r'"murl":"(https?://[^"]+)"', html)
 
@@ -86,6 +87,20 @@ def fetch_web_poster(title_ru, year=0, original_title=""):
             if any(u_clean.endswith(ext) for ext in ('.jpg', '.jpeg', '.png', '.webp')):
                 if not any(bad in u.lower() for bad in ['logo', 'icon', 'banner', 'avatar', 'screenshot']):
                     return u
+
+        # Size‑filtered fallback: choose first candidate whose height ≤ 480 px
+        for candidate in murls:
+            try:
+                rr = requests.get(candidate, headers=headers, impersonate='chrome124', timeout=6)
+                if rr.status_code != 200:
+                    continue
+                from io import BytesIO
+                from PIL import Image
+                img = Image.open(BytesIO(rr.content))
+                if img.height <= 480:
+                    return candidate
+            except Exception:
+                continue
 
         if murls:
             return murls[0]
@@ -513,26 +528,15 @@ def parse_full_details(torrent_id):
         magnet_url = magnet_a['href'] if magnet_a else ""
 
         poster_url = ""
+        # Directly take the first image src from details as poster (no size or domain restrictions)
         for img in details_table.select('img'):
             src = img.get('src', '')
             if not src:
                 continue
             if src.startswith('//'):
                 src = 'https:' + src
-            if is_bad_poster(src):
-                continue
-            if any(k in src.lower() for k in ['fastpic', 'postimg', 'imageban', 'lostpix', 'ibn.im', 'firepic', 'media', 'poster', 'images', 'pictures', 'photobank', 'hostingkartinok', 'imgur', 'kinopoisk', 'kinomania']):
-                poster_url = src
-                break
-        if not poster_url:
-            for img in details_table.select('img'):
-                src = img.get('src', '')
-                if not src or is_bad_poster(src):
-                    continue
-                if src.startswith('//'):
-                    src = 'https:' + src
-                poster_url = src
-                break
+            poster_url = src
+            break
 
         full_text = details_table.text
 
@@ -689,19 +693,8 @@ def parse_full_details(torrent_id):
             # Re-evaluate quality accurately using video_info resolution
             accurate_quality = extract_quality(update_data.get("title", ""), video_info)
 
-            # High quality poster selection: check if parsed is bad, fallback to existing or web poster
+            # Use poster directly from torrent page without size checks
             final_poster = poster_url
-            if is_bad_poster(final_poster):
-                existing_poster = update_data.get("poster_url", "")
-                if not is_bad_poster(existing_poster):
-                    final_poster = existing_poster
-                elif update_data.get("category") in ("movies", "series", "anime"):
-                    final_poster = fetch_web_poster(
-                        update_data.get("title_ru", ""),
-                        update_data.get("year", 0),
-                        update_data.get("title_en", "")
-                    )
-
             # Auto-cache poster locally for complete offline autonomy
             if final_poster and final_poster.startswith("http"):
                 local_poster = cache_poster_locally(torrent_id, final_poster)
@@ -817,3 +810,52 @@ def download_missing_local_posters(limit=50):
             log(f"✅ [ОФЛАЙН-АВТОНОМИЯ] Успешно сохранено локально {cached_count} обложек!", "SUCCESS")
     except Exception as e:
         log(f"⚠️ Ошибка локального сохранения обложек: {e}", "WARNING")
+
+# New function to validate and repair local posters
+
+def repair_local_posters(limit=0):
+    """Validate cached poster files; if corrupted or too small, re-download via fetch_web_poster and update DB."""
+    import os
+    from PIL import Image
+    repaired = 0
+    try:
+        posters_dir = database.POSTERS_DIR
+        files = [f for f in os.listdir(posters_dir) if f.lower().endswith('.jpg')]
+        if limit > 0:
+            files = files[:limit]
+        for fname in files:
+            path = os.path.join(posters_dir, fname)
+            # Quick size check (ignore files <5KB)
+            if os.path.getsize(path) < 5 * 1024:
+                bad = True
+            else:
+                try:
+                    Image.open(path).verify()
+                    bad = False
+                except Exception:
+                    bad = True
+            if bad:
+                torrent_id = os.path.splitext(fname)[0]
+                # Retrieve metadata from DB
+                conn = database.get_connection()
+                c = conn.cursor()
+                c.execute("SELECT title_ru, year, title_en FROM releases WHERE torrent_id = ?", (torrent_id,))
+                row = c.fetchone()
+                conn.close()
+                if row:
+                    new_url = fetch_web_poster(row['title_ru'], row['year'] or 0, row['title_en'] or '')
+                    if new_url:
+                        local = cache_poster_locally(torrent_id, new_url)
+                        if local:
+                            database.update_release_poster(torrent_id, local)
+                            repaired += 1
+                            log(f"🔧 [ОБЛОЖКА] Восстановлен постер для #{torrent_id}: {local}", "DEBUG")
+                # Remove the bad file
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+        if repaired:
+            log(f"✅ [ОБЛОЖКА] Восстановлено {repaired} постеров.", "SUCCESS")
+    except Exception as e:
+        log(f"⚠️ Ошибка восстановления постеров: {e}", "WARNING")

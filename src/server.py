@@ -114,6 +114,13 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         elif path.startswith("/posters/"):
             poster_filename = os.path.basename(path)
             poster_path = os.path.join(database.POSTERS_DIR, poster_filename)
+            if not os.path.exists(poster_path):
+                # Attempt to fetch missing poster directly from torrent page
+                tid_str = os.path.splitext(poster_filename)[0]
+                try:
+                    tracker_engine.parse_full_details(int(tid_str))
+                except Exception as e:
+                    log(f"⚠️ Ошибка загрузки постера для #{tid_str}: {e}", "WARNING")
             if os.path.exists(poster_path):
                 self.serve_static(poster_path)
             else:
