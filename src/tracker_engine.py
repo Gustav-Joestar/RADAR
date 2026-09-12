@@ -538,6 +538,8 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                 detected_country = ""
                 if "/5/" in url or "nashe_kino" in url or "/16/" in url:
                     detected_country = "Россия"
+                elif not title_en and '/' not in raw_title and not re.search(r'[a-zA-Z]{3,}', raw_title):
+                    detected_country = "Россия"
                 elif any(cue in t_lower for cue in ["от exkinoray", "files-x", "сериал ссср", "мосфильм", "ленфильм"]):
                     detected_country = "Россия"
 

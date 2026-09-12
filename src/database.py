@@ -301,9 +301,31 @@ def query_releases(category="movies", min_rating=0.0, max_size=15.0,
 
     # Origin filter (Russian vs Foreign vs All)
     if origin == "russian":
-        conditions.append("(country LIKE '%Россия%' OR country LIKE '%СССР%' OR country LIKE '%РФ%' OR category = 'nashe_kino')")
+        conditions.append("""(
+            country LIKE '%Россия%' 
+            OR country LIKE '%СССР%' 
+            OR country LIKE '%РФ%' 
+            OR country LIKE '%Беларусь%' 
+            OR category = 'nashe_kino'
+            OR (
+                (country IS NULL OR country = '') 
+                AND (title_en IS NULL OR title_en = '') 
+                AND title NOT LIKE '%/%'
+            )
+        )""")
     elif origin == "foreign":
-        conditions.append("(country NOT LIKE '%Россия%' AND country NOT LIKE '%СССР%' AND country NOT LIKE '%РФ%' AND category != 'nashe_kino')")
+        conditions.append("""(
+            country NOT LIKE '%Россия%' 
+            AND country NOT LIKE '%СССР%' 
+            AND country NOT LIKE '%РФ%' 
+            AND country NOT LIKE '%Беларусь%' 
+            AND category != 'nashe_kino'
+            AND (
+                (country IS NOT NULL AND country != '')
+                OR (title_en IS NOT NULL AND title_en != '')
+                OR title LIKE '%/%'
+            )
+        )""")
 
     # Year filter
     if year and str(year) != "all":

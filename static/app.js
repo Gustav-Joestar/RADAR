@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
     max_size: 999.0,
     qualities: ['1080p', '720p'],
     genre: 'all',
-    origin: 'all',
+    origin: 'foreign',
     search: '',
     page: 1,
     limit: 15,
@@ -256,7 +256,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.max_size = 999.0;
     state.qualities = ['1080p', '720p'];
     state.genre = 'all';
-    state.origin = 'all';
+    state.origin = 'foreign';
     state.search = '';
     state.page = 1;
 
@@ -452,7 +452,7 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     }
 
-    if (russianToggle) state.origin = russianToggle.checked ? 'russian' : 'all';
+    if (russianToggle) state.origin = russianToggle.checked ? 'russian' : 'foreign';
     if (yearSelect) state.year = yearSelect.value;
     if (genreSelect) state.genre = genreSelect.value;
     if (ratingToggle) state.min_rating = ratingToggle.checked ? 7.0 : 0.0;

@@ -229,7 +229,7 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         search = params.get("search", [""])[0]
         page = int(params.get("page", ["1"])[0])
         limit = int(params.get("limit", ["15"])[0])
-        origin = params.get("origin", ["all"])[0]
+        origin = params.get("origin", ["foreign"])[0]
         qualities = params.get("quality", None)
         if qualities:
             qualities = qualities[0].split(",") if isinstance(qualities[0], str) else qualities
