@@ -2,9 +2,9 @@
 document.addEventListener('DOMContentLoaded', () => {
   const state = {
     category: 'movies',
-    year: '2026',
+    year: 'all',
     min_rating: 0.0,
-    max_size: 15.0,
+    max_size: 999.0,
     qualities: ['1080p', '720p'],
     genre: 'all',
     search: '',
@@ -26,8 +26,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnPrev = document.getElementById('btn-prev');
   const btnNext = document.getElementById('btn-next');
   const btnRefresh = document.getElementById('btn-refresh');
-  const sizeSlider = document.getElementById('size-slider');
-  const sizeVal = document.getElementById('size-val');
   const ratingToggle = document.getElementById('rating-toggle');
   const ratingWrap = document.getElementById('rating-filter-wrap');
   const qualityWrap = document.getElementById('quality-filter-wrap');
@@ -55,6 +53,21 @@ document.addEventListener('DOMContentLoaded', () => {
   updateCounts();
 
   const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.has('genre')) {
+    state.genre = urlParams.get('genre');
+    if (genreSelect) genreSelect.value = state.genre;
+  }
+  if (urlParams.has('year')) {
+    state.year = urlParams.get('year');
+    if (yearSelect) yearSelect.value = state.year;
+  }
+  if (urlParams.has('rating')) {
+    state.min_rating = parseFloat(urlParams.get('rating'));
+    if (ratingToggle) ratingToggle.checked = state.min_rating > 0;
+  }
+  if (urlParams.has('page')) {
+    state.page = parseInt(urlParams.get('page')) || 1;
+  }
   const initialTab = urlParams.get('tab') || window.location.hash.replace('#', '');
   if (initialTab && ['watchlist', 'ignored', 'movies', 'series', 'anime', 'games', 'software'].includes(initialTab)) {
     const targetBtn = document.querySelector(`.cat-btn[data-category="${initialTab}"]`);
@@ -85,20 +98,17 @@ document.addEventListener('DOMContentLoaded', () => {
           qualityWrap.style.display = 'none';
           yearWrap.style.display = 'none';
           if (genreWrap) genreWrap.style.display = 'none';
-          if (sizeSlider) sizeSlider.parentElement.style.display = 'none';
         } else if (state.category === 'games' || state.category === 'software') {
           ratingWrap.style.display = 'none';
           qualityWrap.style.display = 'none';
           yearWrap.style.display = 'none';
           if (genreWrap) genreWrap.style.display = 'flex';
-          if (sizeSlider) sizeSlider.parentElement.style.display = 'flex';
           state.min_rating = 0.0;
         } else {
           ratingWrap.style.display = 'flex';
           qualityWrap.style.display = 'flex';
           yearWrap.style.display = 'flex';
           if (genreWrap) genreWrap.style.display = 'flex';
-          if (sizeSlider) sizeSlider.parentElement.style.display = 'flex';
           state.min_rating = ratingToggle.checked ? 7.0 : 0.0;
         }
 
@@ -133,16 +143,6 @@ document.addEventListener('DOMContentLoaded', () => {
           fetchReleases();
         });
       }
-    });
-
-    // Size Slider
-    sizeSlider.addEventListener('input', (e) => {
-      sizeVal.textContent = `${e.target.value} GB`;
-      state.max_size = parseFloat(e.target.value);
-    });
-    sizeSlider.addEventListener('change', () => {
-      state.page = 1;
-      fetchReleases();
     });
 
     // Rating Toggle
@@ -208,6 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     btnNext.addEventListener('click', () => {
+      if (state.page >= state.totalPages) return;
       state.page++;
       fetchReleases();
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -244,18 +245,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function resetFilters() {
-    state.year = '2026';
+    state.year = 'all';
     state.min_rating = 0.0;
-    state.max_size = 15.0;
+    state.max_size = 999.0;
     state.qualities = ['1080p', '720p'];
     state.genre = 'all';
     state.search = '';
     state.page = 1;
 
-    if (yearSelect) yearSelect.value = '2026';
+    if (yearSelect) yearSelect.value = 'all';
     if (searchInput) searchInput.value = '';
-    if (sizeSlider) sizeSlider.value = 15;
-    if (sizeVal) sizeVal.textContent = '15 GB';
     if (ratingToggle) ratingToggle.checked = false;
     if (genreSelect) genreSelect.value = 'all';
 
@@ -289,29 +288,22 @@ document.addEventListener('DOMContentLoaded', () => {
       .then(res => res.json())
       .then(data => {
         if (!data.years || !yearSelect) return;
-        const currentYear = state.year;
+        const currentYear = state.year || 'all';
         yearSelect.innerHTML = '';
         
-        const opt26 = document.createElement('option');
-        opt26.value = '2026';
-        opt26.textContent = '2026 год';
-        yearSelect.appendChild(opt26);
-
-        data.years.forEach(y => {
-          if (y != 2026) {
-            const opt = document.createElement('option');
-            opt.value = String(y);
-            opt.textContent = `${y} год`;
-            yearSelect.appendChild(opt);
-          }
-        });
-
         const optAll = document.createElement('option');
         optAll.value = 'all';
         optAll.textContent = 'Все годы';
         yearSelect.appendChild(optAll);
 
-        yearSelect.value = currentYear || '2026';
+        data.years.forEach(y => {
+          const opt = document.createElement('option');
+          opt.value = String(y);
+          opt.textContent = `${y} год`;
+          yearSelect.appendChild(opt);
+        });
+
+        yearSelect.value = currentYear;
       })
       .catch(() => {});
   }
@@ -431,11 +423,11 @@ document.addEventListener('DOMContentLoaded', () => {
         renderCards(data.items, false);
         state.totalPages = data.pages;
         currentPageSpan.textContent = data.page;
-        totalPagesSpan.textContent = data.pages;
+        totalPagesSpan.textContent = state.totalPages;
         resultsCount.textContent = `Найдено релизов: ${data.total} (показано ${data.items.length})`;
 
         btnPrev.disabled = data.page <= 1;
-        btnNext.disabled = false; // allow clicking next to fetch more on the fly
+        btnNext.disabled = data.page >= state.totalPages || data.total <= data.page * data.limit;
 
         if (data.total === 0) {
           cardsGrid.style.display = 'none';
@@ -444,7 +436,7 @@ document.addEventListener('DOMContentLoaded', () => {
           cardsGrid.style.display = 'grid';
           emptyState.style.display = 'none';
         }
-        consoleStatusText.textContent = `Найдено ${data.total} уникальных релизов (${state.year} г., стр. ${data.page})`;
+        consoleStatusText.textContent = `Найдено ${data.total} уникальных релизов (${state.year === 'all' ? 'все годы' : `${state.year} г.`}, стр. ${data.page})`;
 
         // Check if any items are missing posters on current page
         const hasMissingPosters = data.items.some(i => !i.poster_url);
@@ -460,6 +452,72 @@ document.addEventListener('DOMContentLoaded', () => {
           cardsGrid.innerHTML = `<div style="grid-column: 1/-1; color: #ef4444; padding: 40px; text-align: center;">Ошибка загрузки данных: ${err.message}</div>`;
         }
       });
+  }
+
+  const COUNTRY_FLAGS = {
+    'россия': '🇷🇺',
+    'рф': '🇷🇺',
+    'ссср': '🇷🇺',
+    'сша': '🇺🇸',
+    'usa': '🇺🇸',
+    'великобритания': '🇬🇧',
+    'британия': '🇬🇧',
+    'канада': '🇨🇦',
+    'франция': '🇫🇷',
+    'германия': '🇩🇪',
+    'италия': '🇮🇹',
+    'испания': '🇪🇸',
+    'япония': '🇯🇵',
+    'корея южная': '🇰🇷',
+    'южная корея': '🇰🇷',
+    'корея': '🇰🇷',
+    'китай': '🇨🇳',
+    'гонконг': '🇭🇰',
+    'тайвань': '🇹🇼',
+    'австралия': '🇦🇺',
+    'индия': '🇮🇳',
+    'венгрия': '🇭🇺',
+    'польша': '🇵🇱',
+    'швеция': '🇸🇪',
+    'норвегия': '🇳🇴',
+    'дания': '🇩🇰',
+    'финляндия': '🇫🇮',
+    'бельгия': '🇧🇪',
+    'нидерланды': '🇳🇱',
+    'мексика': '🇲🇽',
+    'бразилия': '🇧🇷',
+    'аргентина': '🇦🇷',
+    'индонезия': '🇮🇩',
+    'турция': '🇹🇷',
+    'юар': '🇿🇦',
+    'ирландия': '🇮🇪',
+    'чехия': '🇨🇿',
+    'австрия': '🇦🇹',
+    'швейцария': '🇨🇭',
+    'греция': '🇬🇷',
+    'таиланд': '🇹🇭',
+    'новая зеландия': '🇳🇿'
+  };
+
+  function formatCountryBadge(countryStr) {
+    if (!countryStr || typeof countryStr !== 'string') return '';
+    const clean = countryStr.split(/[,/|;]/)[0].trim();
+    if (!clean) return '';
+    const lower = clean.toLowerCase();
+    let flag = '🌍';
+    for (const [name, emoji] of Object.entries(COUNTRY_FLAGS)) {
+      if (lower.includes(name)) {
+        flag = emoji;
+        break;
+      }
+    }
+    return `
+      <div class="card-country-box">
+        <span class="card-country" title="${countryStr}">
+          <span>${flag}</span> ${clean}
+        </span>
+      </div>
+    `;
   }
 
   function renderCards(items, isWatchlist = false) {
@@ -515,6 +573,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <h3 class="card-title" title="${item.title}">${item.title_ru}</h3>
           <div class="card-orig">${item.title_en ? `${item.title_en} · ` : ''}${item.year || ''}</div>
           <div class="card-genres">${item.genre || 'Релиз трекера'}</div>
+          ${formatCountryBadge(item.country)}
           <div class="card-meta-row">
             <span class="card-size">${item.size_str || `${item.size_gb} GB`}</span>
             <div class="card-peers">

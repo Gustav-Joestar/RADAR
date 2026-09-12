@@ -83,12 +83,6 @@
         </label>
       </div>
 
-      <!-- Max Size Filter -->
-      <div class="filter-group size-group">
-        <label>Макс. размер: <strong id="size-val">15 GB</strong></label>
-        <input type="range" id="size-slider" min="1" max="50" value="15" step="1">
-      </div>
-
       <!-- Rating Filter -->
       <div class="filter-group rating-group" id="rating-filter-wrap">
         <label class="checkbox-label">
@@ -101,11 +95,11 @@
       <div class="filter-group year-group" id="year-filter-wrap">
         <label for="year-select">Год:</label>
         <select id="year-select">
-          <option value="2026" selected>2026 год</option>
+          <option value="all" selected>Все годы</option>
+          <option value="2026">2026 год</option>
           <option value="2025">2025 год</option>
           <option value="2024">2024 год</option>
           <option value="2023">2023 год</option>
-          <option value="all">Все годы</option>
         </select>
       </div>
 

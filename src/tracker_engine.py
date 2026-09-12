@@ -133,19 +133,20 @@ def scan_category(category_name, year=2026, max_pages=1):
     return _process_tracker_urls(urls_to_scan, category_name, year)
 
 def scan_next_tracker_page(category_name, year=2026):
+    y_val = int(year) if str(year).isdigit() else 0
     cat_ids = CATEGORY_MAP.get(category_name, [1])
-    page = database.get_crawl_page(category_name, year)
-    year_label = f" (год: {year})" if year and year > 0 else ""
+    page = database.get_crawl_page(category_name, y_val)
+    year_label = f" (год: {y_val})" if y_val > 0 else " (все годы)"
     log(f"📡 [РАДАР] Запрос следующей страницы трекера (#{page}) [{category_name}]{year_label}...", "INFO")
     urls_to_scan = []
     for cat_id in cat_ids:
-        if year and year > 0 and category_name in ("movies", "series", "anime"):
-            urls_to_scan.append(f"http://rutor.info/search/{page}/{cat_id}/0/0/{year}")
+        if y_val > 0 and category_name in ("movies", "series", "anime"):
+            urls_to_scan.append(f"http://rutor.info/search/{page}/{cat_id}/0/0/{y_val}")
         else:
             urls_to_scan.append(f"http://rutor.info/browse/{page}/{cat_id}/0/0")
 
-    res = _process_tracker_urls(urls_to_scan, category_name, year)
-    database.advance_crawl_page(category_name, year)
+    res = _process_tracker_urls(urls_to_scan, category_name, y_val)
+    database.advance_crawl_page(category_name, y_val)
     return res
 
 def _process_tracker_urls(urls_to_scan, category_name, year):

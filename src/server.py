@@ -138,9 +138,9 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
     def handle_api_items(self, params):
         category = params.get("category", ["movies"])[0]
         min_rating = float(params.get("min_rating", ["0.0"])[0])
-        max_size = float(params.get("max_size", ["15.0"])[0])
+        max_size = float(params.get("max_size", ["999.0"])[0])
         genre = params.get("genre", ["all"])[0]
-        year = params.get("year", ["2026"])[0]
+        year = params.get("year", ["all"])[0]
         search = params.get("search", [""])[0]
         page = int(params.get("page", ["1"])[0])
         limit = int(params.get("limit", ["15"])[0])
@@ -149,7 +149,8 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             qualities = qualities[0].split(",") if isinstance(qualities[0], str) else qualities
 
         q_desc = ",".join(qualities) if qualities else "любое"
-        log(f"📡 [РАДАР] Запрос витрины [{category}], {year} г., качество: {q_desc}, размер: <={max_size}GB, стр. {page}", "INFO")
+        y_desc = "все годы" if year == "all" else f"{year} г."
+        log(f"📡 [РАДАР] Запрос витрины [{category}], {y_desc}, жанр: {genre}, рейтинг: >={min_rating}, качество: {q_desc}, стр. {page}", "INFO")
 
         data = database.query_releases(
             category=category, min_rating=min_rating,
@@ -158,12 +159,27 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             deduplicate=True
         )
 
-        log(f"✅ [РАДАР] Найдено {data['total']} релизов (выведено {len(data['items'])} на стр. {page})", "SUCCESS")
+        # Auto-backfill to fill page up to limit (15 items) if filtered results are sparse
+        if len(data["items"]) < limit and not search and category in ("movies", "series", "anime"):
+            y_scan = int(year) if str(year).isdigit() else 0
+            log(f"🔄 [АВТО-ДОПОДГРУЗКА] Найдено {len(data['items'])}/{limit} релизов. Сканирование трекера для пополнения страницы...", "INFO")
+            for _ in range(2):
+                crawled = tracker_engine.scan_next_tracker_page(category, y_scan)
+                if not crawled:
+                    break
+                data = database.query_releases(
+                    category=category, min_rating=min_rating,
+                    max_size=max_size, qualities=qualities, genre=genre,
+                    year=year, search=search, page=page, limit=limit,
+                    deduplicate=True
+                )
+                if len(data["items"]) >= limit:
+                    break
 
-        # If items on this page are low or 0 and user isn't doing a specific text search, trigger crawl next page
-        if len(data["items"]) < limit and not search and genre == "all":
-            y_scan = int(year) if str(year).isdigit() else 2026
-            threading.Thread(target=tracker_engine.scan_next_tracker_page, args=(category, y_scan), daemon=True).start()
+            if len(data["items"]) < limit:
+                threading.Thread(target=tracker_engine.scan_next_tracker_page, args=(category, y_scan), daemon=True).start()
+
+        log(f"✅ [РАДАР] Итого: {data['total']} релизов (выведено {len(data['items'])} на стр. {page})", "SUCCESS")
 
         # Auto-queue background details & poster fetch for any items on screen that lack posters
         missing_posters = [it.get("torrent_id") for it in data["items"] if not it.get("poster_url") and it.get("torrent_id")]
