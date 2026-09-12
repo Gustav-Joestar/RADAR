@@ -9,7 +9,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 if exist ".venv\Scripts\python.exe" (
-    start "" ".venv\Scripts\python.exe" launcher.py
+    start "" ".venv\Scripts\python.exe" src\launcher.py
 ) else (
-    start "" python launcher.py
+    start "" python src\launcher.py
 )

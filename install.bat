@@ -47,7 +47,7 @@ if %ERRORLEVEL% NEQ 0 (
 echo.
 echo ============================================================
 echo  [SUCCESS] RADAR installation complete!
-echo  You can now launch the app using run_radar.bat
+echo  You can now launch the app using run.bat
 echo ============================================================
 echo.
 pause

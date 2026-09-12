@@ -17,6 +17,8 @@ venv.bak/
 *.db
 *.sqlite3
 radar.db
+data/*.db
+data/*.sqlite3
 
 # Logs
 *.log
