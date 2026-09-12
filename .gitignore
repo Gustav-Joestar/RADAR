@@ -19,6 +19,8 @@ venv.bak/
 radar.db
 data/*.db
 data/*.sqlite3
+data/posters/*
+!data/posters/.gitkeep
 
 # Logs
 *.log

@@ -1,3 +1,4 @@
+import os
 import re
 import time
 import json
@@ -59,23 +60,24 @@ def fetch_web_poster(title_ru, year=0, original_title=""):
 
     query = " ".join(q_parts)
     q_enc = urllib.parse.quote(query)
-    url = f"https://www.bing.com/images/search?q={q_enc}&form=HDRSC2"
+    # Strictly vertical portrait aspect ratio filter
+    url = f"https://www.bing.com/images/search?q={q_enc}&qft=+filterui:aspect-tall&form=IRFLTR"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
     }
     try:
-        r = requests.get(url, headers=headers, impersonate='chrome124', timeout=5)
+        r = requests.get(url, headers=headers, impersonate='chrome124', timeout=6)
         html = r.text
         murls = re.findall(r'murl&quot;:&quot;(https?://[^&]+)&quot;', html)
         if not murls:
             murls = re.findall(r'"murl":"(https?://[^"]+)"', html)
 
-        # Priority 1: High quality official cinema sites
-        priority_domains = ['avatars.mds.yandex.net', 'kinopoisk', 'kinorium', 'kinonews', 'film.ru', 'wikimedia.org', 'lostfilm']
+        # Priority 1: High quality official cinema sites with official vertical art
+        priority_domains = ['avatars.mds.yandex.net', 'kinopoisk', 'kinorium', 'kinonews', 'film.ru', 'kg-portal.ru', 'wikimedia.org', 'lostfilm']
         for domain in priority_domains:
             for u in murls:
-                if domain in u.lower() and not any(bad in u.lower() for bad in ['logo', 'icon', 'trailer', 'avatar', 'shot']):
+                if domain in u.lower() and not any(bad in u.lower() for bad in ['logo', 'icon', 'trailer', 'avatar', 'shot', 'banner', 'still']):
                     return u
 
         # Priority 2: Any clean image URL with jpg/png/webp
@@ -90,6 +92,36 @@ def fetch_web_poster(title_ru, year=0, original_title=""):
     except Exception as e:
         log(f"⚠️ Ошибка поиска веб-постера для «{title_ru}»: {e}", "DEBUG")
     return ""
+
+def cache_poster_locally(torrent_id, poster_url):
+    """Download remote poster and save to data/posters/<torrent_id>.jpg for complete offline autonomy."""
+    if not poster_url or not torrent_id:
+        return ""
+    if poster_url.startswith("/posters/"):
+        return poster_url
+
+    local_filename = f"{torrent_id}.jpg"
+    local_file_path = os.path.join(database.POSTERS_DIR, local_filename)
+
+    # If already downloaded and valid, return local URL
+    if os.path.exists(local_file_path) and os.path.getsize(local_file_path) > 1024:
+        return f"/posters/{local_filename}"
+
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://www.google.com/"
+        }
+        r = requests.get(poster_url, headers=headers, impersonate="chrome124", timeout=6)
+        if r.status_code == 200 and len(r.content) > 1024:
+            with open(local_file_path, "wb") as f:
+                f.write(r.content)
+            log(f"💾 [ОФЛАЙН-КЭШ] Обложка сохранена локально: /posters/{local_filename} ({round(len(r.content)/1024, 1)} KB)", "DEBUG")
+            return f"/posters/{local_filename}"
+    except Exception as e:
+        log(f"⚠️ Не удалось локально сохранить постер #{torrent_id}: {e}", "DEBUG")
+
+    return poster_url
 
 GENRE_KEYWORDS = {
     "Боевик": ["боевик", "action"],
@@ -518,29 +550,90 @@ def parse_full_details(torrent_id):
         actors = find_field([r'В ролях:\s*([^\n\r]+)', r'Актеры:\s*([^\n\r]+)', r'Cast:\s*([^\n\r]+)'])
         country = extract_clean_country(full_text)
         duration = find_field([r'Продолжительность:\s*([^\n\r]+)', r'Время:\s*([^\n\r]+)'])
-        voiceover = find_field([r'Перевод:\s*([^\n\r]+)', r'Озвучивание:\s*([^\n\r]+)', r'Аудиоперевод:\s*([^\n\r]+)'])
-        video_info = find_field([r'Видео:\s*([^\n\r]+)', r'Video:\s*([^\n\r]+)'])
-        audio_info = find_field([r'Аудио:\s*([^\n\r]+)', r'Audio:\s*([^\n\r]+)'])
-        subtitles_str = find_field([r'Субтитры:\s*([^\n\r]+)', r'Subtitles:\s*([^\n\r]+)'])
+
+        # Universal Multi-Line Parser for Translations, Audio tracks, Subtitles, Video
+        translation_lines = []
+        audio_lines = []
+        subtitle_lines = []
+        video_lines = []
+
+        for line in full_text.splitlines():
+            line_str = line.strip()
+            if not line_str:
+                continue
+            line_clean = re.sub(r'\s+', ' ', line_str)
+
+            # 1. Translations: Перевод, Перевод 1, Перевод #01, Озвучка, Озвучивание, Дубляж, Аудиоперевод
+            m_trans = re.match(r'^(?:Перевод(?:\s*\d+|\s*#\d+)?|Озвучка|Озвучивание|Дубляж|Аудиоперевод)\s*:\s*(.*)', line_clean, re.I)
+            if m_trans:
+                val = m_trans.group(1).strip()
+                if val:
+                    header = line_clean.split(':', 1)[0].strip()
+                    formatted_val = f"{header}: {val}" if any(c.isdigit() for c in header) else val
+                    if formatted_val not in translation_lines:
+                        translation_lines.append(formatted_val)
+
+            # 2. Audio tracks: Аудио, Аудио 1, Аудио #1, Звук 1, Audio
+            m_aud = re.match(r'^(?:Аудио(?:\s*\d+|\s*#\d+)?|Звук(?:\s*\d+|\s*#\d+)?|Audio(?:\s*\d+|\s*#\d+)?)\s*:\s*(.*)', line_clean, re.I)
+            if m_aud:
+                val = m_aud.group(1).strip()
+                if val:
+                    header = line_clean.split(':', 1)[0].strip()
+                    formatted_track = f"{header}: {val}" if any(c.isdigit() for c in header) else val
+                    if formatted_track not in audio_lines:
+                        audio_lines.append(formatted_track)
+
+            # 3. Subtitles: Субтитры, Subtitles
+            m_sub = re.match(r'^(?:Субтитры(?:\s*\d+|\s*#\d+)?|Subtitles?)\s*:\s*(.*)', line_clean, re.I)
+            if m_sub:
+                val = m_sub.group(1).strip()
+                if val and val.lower() != 'нет':
+                    if val not in subtitle_lines:
+                        subtitle_lines.append(val)
+
+            # 4. Video: Видео, Video
+            m_vid = re.match(r'^(?:Видео|Video)\s*:\s*(.*)', line_clean, re.I)
+            if m_vid:
+                val = m_vid.group(1).strip()
+                if val and val not in video_lines:
+                    video_lines.append(val)
+
+        # Assemble unified voiceover / translation string
+        voiceover = "; ".join(translation_lines) if translation_lines else find_field([r'Перевод:\s*([^\n\r]+)', r'Озвучивание:\s*([^\n\r]+)', r'Аудиоперевод:\s*([^\n\r]+)'])
+
+        # Assemble video info
+        video_info = " | ".join(video_lines) if video_lines else find_field([r'Видео:\s*([^\n\r]+)', r'Video:\s*([^\n\r]+)'])
+
+        # Assemble structured audio tracks
+        audio_tracks = []
+        if audio_lines:
+            audio_tracks = audio_lines
+        else:
+            audio_info_fallback = find_field([r'Аудио:\s*([^\n\r]+)', r'Audio:\s*([^\n\r]+)'])
+            if audio_info_fallback:
+                parts = re.split(r'[\r\n]+|;\s*|\s*\|\s*', audio_info_fallback)
+                audio_tracks = [p.strip() for p in parts if p.strip()]
+
+        audio_info = "; ".join(audio_tracks) if audio_tracks else ""
+
+        # Assemble structured subtitles
+        subtitles_list = []
+        if subtitle_lines:
+            for s in subtitle_lines:
+                for sub_item in re.split(r',\s*(?![^()]*\))|;\s*', s):
+                    sub_item = sub_item.strip()
+                    if sub_item and sub_item.lower() != 'нет' and sub_item not in subtitles_list:
+                        subtitles_list.append(sub_item)
+        else:
+            subtitles_str_fallback = find_field([r'Субтитры:\s*([^\n\r]+)', r'Subtitles:\s*([^\n\r]+)'])
+            if subtitles_str_fallback:
+                for p in re.split(r',\s*(?![^()]*\))|;\s*', subtitles_str_fallback):
+                    p = p.strip()
+                    if p and p.lower() != 'нет':
+                        subtitles_list.append(p)
 
         desc_m = re.search(r'(?:О фильме|Описание|Сюжет|О сериале|О программе|Об игре):\s*\n*(.*?)(?=\n\s*(?:Выпущено|Продолжительность|Файл|Качество|Видео|Перевод|Релиз|Технические|MediaInfo|\Z))', full_text, re.DOTALL | re.IGNORECASE)
         description = desc_m.group(1).strip() if desc_m else ""
-
-        audio_tracks = []
-        if audio_info:
-            parts = re.split(r'[\r\n]+|;\s*|\s*\|\s*', audio_info)
-            for p in parts:
-                p = p.strip()
-                if p:
-                    audio_tracks.append(p)
-
-        subtitles_list = []
-        if subtitles_str:
-            parts = re.split(r'[\r\n]+|,\s*|;\s*', subtitles_str)
-            for p in parts:
-                p = p.strip()
-                if p and p.lower() != 'нет':
-                    subtitles_list.append(p)
 
         # 1. Fetch ratings from Kinopoisk and IMDb, and use Kinopoisk poster as fallback
         kp_rating = 0.0
@@ -549,7 +642,7 @@ def parse_full_details(torrent_id):
         kp_m = re.search(r'kinopoisk\.ru/film/(\d+)', html)
         if kp_m:
             kp_id = kp_m.group(1)
-            if not poster_url or 'radikal' in poster_url:
+            if not poster_url or is_bad_poster(poster_url):
                 poster_url = f"https://st.kp.yandex.net/images/film_iphone/iphone360_{kp_id}.jpg"
             try:
                 r_kp = requests.get(f'https://rating.kinopoisk.ru/{kp_id}.xml', timeout=4)
@@ -577,7 +670,7 @@ def parse_full_details(torrent_id):
         seasons_info = []
         raw_title = soup.select_one('h1').text if soup.select_one('h1') else ""
         title_clean = raw_title.split('/')[0].split('(')[0].strip()
-        
+
         if any(w in raw_title.lower() for w in ['сезон', 'серии', 's0']):
             for s_num in range(1, 6):
                 seasons_info.append({
@@ -609,6 +702,12 @@ def parse_full_details(torrent_id):
                         update_data.get("title_en", "")
                     )
 
+            # Auto-cache poster locally for complete offline autonomy
+            if final_poster and final_poster.startswith("http"):
+                local_poster = cache_poster_locally(torrent_id, final_poster)
+                if local_poster:
+                    final_poster = local_poster
+
             update_data.update({
                 "quality": accurate_quality,
                 "poster_url": final_poster or "",
@@ -623,7 +722,7 @@ def parse_full_details(torrent_id):
                 "video_info": video_info or update_data.get("video_info", ""),
                 "audio_info": audio_info or update_data.get("audio_info", ""),
                 "audio_tracks": json.dumps(audio_tracks, ensure_ascii=False),
-                "subtitles": json.dumps(subtitles_list, ensure_ascii=False) if subtitles_list else subtitles_str,
+                "subtitles": json.dumps(subtitles_list, ensure_ascii=False) if subtitles_list else subtitles_str_fallback,
                 "imdb_rating": imdb_rating or update_data.get("imdb_rating", 0.0),
                 "kp_rating": kp_rating or update_data.get("kp_rating", 0.0),
                 "seasons_info": json.dumps(seasons_info, ensure_ascii=False),
@@ -674,9 +773,10 @@ def enhance_existing_movie_posters(limit=100):
             t_en = item.get('title_en') or ''
             new_poster = fetch_web_poster(t_ru, yr, t_en)
             if new_poster and not is_bad_poster(new_poster):
-                database.update_release_poster(tid, new_poster)
+                local_p = cache_poster_locally(tid, new_poster)
+                database.update_release_poster(tid, local_p or new_poster)
                 fixed_count += 1
-                log(f"✨ [ОБЛОЖКА] #{tid} «{t_ru}» обновлен постер: {new_poster[:60]}...", "DEBUG")
+                log(f"✨ [ОБЛОЖКА] #{tid} «{t_ru}» обновлен постер: {local_p or new_poster[:60]}...", "DEBUG")
 
         if fixed_count > 0:
             log(f"✅ [ОБЛОЖКИ] Успешно обновлено постеров: {fixed_count}", "SUCCESS")
@@ -684,3 +784,36 @@ def enhance_existing_movie_posters(limit=100):
     except Exception as e:
         log(f"⚠️ Ошибка улучшения постеров: {e}", "WARNING")
         return 0
+
+def download_missing_local_posters(limit=50):
+    """Background task: download remote poster URLs into data/posters/ for 100% offline autonomy."""
+    try:
+        conn = database.get_connection()
+        c = conn.cursor()
+        c.execute("""
+            SELECT torrent_id, poster_url FROM releases 
+            WHERE poster_url LIKE 'http%'
+            ORDER BY 
+                CASE WHEN user_status = 'watchlist' THEN 0 ELSE 1 END,
+                date_ts DESC
+            LIMIT ?
+        """, (limit,))
+        rows = c.fetchall()
+        conn.close()
+
+        if not rows:
+            return
+
+        log(f"💾 [ОФЛАЙН-АВТОНОМИЯ] Проверка локального кэша для {len(rows)} обложек...", "INFO")
+        cached_count = 0
+        for r in rows:
+            tid, p_url = r['torrent_id'], r['poster_url']
+            local_url = cache_poster_locally(tid, p_url)
+            if local_url and local_url.startswith("/posters/"):
+                database.update_release_poster(tid, local_url)
+                cached_count += 1
+
+        if cached_count > 0:
+            log(f"✅ [ОФЛАЙН-АВТОНОМИЯ] Успешно сохранено локально {cached_count} обложек!", "SUCCESS")
+    except Exception as e:
+        log(f"⚠️ Ошибка локального сохранения обложек: {e}", "WARNING")

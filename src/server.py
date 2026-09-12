@@ -111,6 +111,13 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/browser_closing":
             schedule_shutdown(3.5)
             self.send_json({"status": "closing"})
+        elif path.startswith("/posters/"):
+            poster_filename = os.path.basename(path)
+            poster_path = os.path.join(database.POSTERS_DIR, poster_filename)
+            if os.path.exists(poster_path):
+                self.serve_static(poster_path)
+            else:
+                self.send_error(404, "Poster not found")
         elif path == "/api/poster_search":
             self.handle_api_poster_search(params)
         else:
@@ -295,7 +302,11 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
 
         poster_url = tracker_engine.fetch_web_poster(title, year, original_title)
         if poster_url and torrent_id:
-            database.update_release_poster(torrent_id, poster_url)
+            local_url = tracker_engine.cache_poster_locally(torrent_id, poster_url)
+            database.update_release_poster(torrent_id, local_url or poster_url)
+            self.send_json({"poster_url": local_url or poster_url})
+            return
+
         self.send_json({"poster_url": poster_url or ""})
 
     def serve_file(self, full_path, content_type):
@@ -343,6 +354,9 @@ def run_server(port=PORT):
 
     # Auto-enhance missing / low-res movie posters in background
     threading.Thread(target=tracker_engine.enhance_existing_movie_posters, daemon=True).start()
+
+    # Auto-cache remote posters locally to disk for 100% offline autonomy
+    threading.Thread(target=tracker_engine.download_missing_local_posters, daemon=True).start()
 
     # Watchdog monitor: stops server when browser closes
     threading.Thread(target=watchdog_monitor, daemon=True).start()

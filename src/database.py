@@ -5,7 +5,9 @@ import re
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+POSTERS_DIR = os.path.join(DATA_DIR, "posters")
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(POSTERS_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "radar.db")
 
 CORE_GENRES = [

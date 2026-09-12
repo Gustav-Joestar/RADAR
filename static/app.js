@@ -79,6 +79,9 @@ document.addEventListener('DOMContentLoaded', () => {
   if (urlParams.has('page')) {
     state.page = parseInt(urlParams.get('page')) || 1;
   }
+  if (urlParams.has('modal')) {
+    setTimeout(() => openModal(urlParams.get('modal')), 700);
+  }
 
   Promise.all([loadYears(), loadGenres()]).finally(() => {
     if (yearSelect && state.year) {
@@ -817,11 +820,11 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch(e) {}
 
     const audioTagsHtml = (audioTracksList && audioTracksList.length > 0)
-      ? audioTracksList.map(t => `<span class="stream-tag">🔊 ${t}</span>`).join('')
+      ? audioTracksList.map(t => `<div class="stream-tag" style="display: block; width: 100%; margin-bottom: 6px; padding: 6px 10px; font-size: 12px; line-height: 1.4; border-radius: 6px; background: rgba(0, 255, 204, 0.07); border: 1px solid rgba(0, 255, 204, 0.2);">🔊 ${t}</div>`).join('')
       : `<span class="stream-tag">${item.audio_info || 'Информация уточняется'}</span>`;
 
     const subsTagsHtml = (subsList && subsList.length > 0 && subsList[0])
-      ? subsList.map(s => `<span class="stream-tag">📄 ${s}</span>`).join('')
+      ? subsList.map(s => `<span class="stream-tag" style="margin-right: 4px; margin-bottom: 4px; display: inline-block;">📄 ${s}</span>`).join('')
       : `<span class="stream-tag">Субтитры отсутствуют или не указаны</span>`;
 
     const seasonsBlockHtml = (state.category === 'series' && seasonsList && seasonsList.length > 0)
@@ -920,7 +923,11 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="audio-subs-box">
           <div class="audio-subs-item">
             <h4>🎧 АУДИОДОРОЖКИ И ОЗВУЧКА</h4>
-            ${item.voiceover ? `<div style="font-size: 13px; margin-bottom: 6px; color: var(--text-main);"><strong>Перевод:</strong> ${item.voiceover}</div>` : ''}
+            ${item.voiceover ? `
+              <div style="margin-bottom: 10px; font-size: 13px;">
+                ${item.voiceover.split(/;\s*/).filter(Boolean).map(v => `<div style="margin-bottom: 4px; color: var(--text-main);"><strong style="color: var(--accent);">🎙️</strong> ${v}</div>`).join('')}
+              </div>
+            ` : ''}
             <div class="tag-list">${audioTagsHtml}</div>
           </div>
 
