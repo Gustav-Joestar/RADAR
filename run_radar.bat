@@ -1,3 +1,15 @@
 @echo off
-cd /d "C:\Users\andre\Documents\RADAR"
-"C:\Program Files\Python312\python.exe" "C:\Users\andre\Documents\RADAR\launcher.py"
+setlocal
+cd /d "%~dp0"
+title RADAR
+
+if not exist ".venv\Scripts\python.exe" (
+    echo [*] Virtual environment not found. Running installation...
+    call install.bat
+)
+
+if exist ".venv\Scripts\python.exe" (
+    start "" ".venv\Scripts\python.exe" launcher.py
+) else (
+    start "" python launcher.py
+)
