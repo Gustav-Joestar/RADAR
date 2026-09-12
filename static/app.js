@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   // DOM Elements
+  const progressBar = document.getElementById('global-progress-bar');
   const cardsGrid = document.getElementById('cards-grid');
   const tableViewContainer = document.getElementById('table-view-container');
   const ignoredTableBody = document.getElementById('ignored-table-body');
@@ -52,18 +53,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initialize
   initEventListeners();
-  loadYears();
-  loadGenres();
   updateCounts();
 
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.has('genre')) {
     state.genre = urlParams.get('genre');
-    if (genreSelect) genreSelect.value = state.genre;
   }
   if (urlParams.has('year')) {
-    state.year = urlParams.get('year');
-    if (yearSelect) yearSelect.value = state.year;
+    let y = urlParams.get('year');
+    if (y === '< 2000' || y === '<2000') y = '<2000';
+    state.year = y;
   }
   if (urlParams.has('rating')) {
     state.min_rating = parseFloat(urlParams.get('rating'));
@@ -80,17 +79,26 @@ document.addEventListener('DOMContentLoaded', () => {
   if (urlParams.has('page')) {
     state.page = parseInt(urlParams.get('page')) || 1;
   }
-  const initialTab = urlParams.get('tab') || window.location.hash.replace('#', '');
-  if (initialTab && ['watchlist', 'ignored', 'movies', 'series', 'games', 'software'].includes(initialTab)) {
-    const targetBtn = document.querySelector(`.cat-btn[data-category="${initialTab}"]`);
-    if (targetBtn) {
-      targetBtn.click();
+
+  Promise.all([loadYears(), loadGenres()]).finally(() => {
+    if (yearSelect && state.year) {
+      yearSelect.value = state.year;
+    }
+    if (genreSelect && state.genre) {
+      genreSelect.value = state.genre;
+    }
+    const initialTab = urlParams.get('tab') || window.location.hash.replace('#', '');
+    if (initialTab && ['watchlist', 'ignored', 'movies', 'series', 'games', 'software'].includes(initialTab)) {
+      const targetBtn = document.querySelector(`.cat-btn[data-category="${initialTab}"]`);
+      if (targetBtn) {
+        targetBtn.click();
+      } else {
+        fetchReleases();
+      }
     } else {
       fetchReleases();
     }
-  } else {
-    fetchReleases();
-  }
+  });
 
   pollLogs();
   setInterval(pollLogs, 2000);
@@ -268,10 +276,10 @@ document.addEventListener('DOMContentLoaded', () => {
   function loadYears() {
     if (['games', 'software', 'watchlist', 'ignored'].includes(state.category)) {
       if (yearWrap) yearWrap.style.display = 'none';
-      return;
+      return Promise.resolve();
     }
     if (yearWrap) yearWrap.style.display = 'flex';
-    fetch(`/api/years?category=${state.category}`)
+    return fetch(`/api/years?category=${state.category}`)
       .then(res => res.json())
       .then(data => {
         if (!data.years || !yearSelect) return;
@@ -285,18 +293,59 @@ document.addEventListener('DOMContentLoaded', () => {
 
         data.years.forEach(y => {
           const opt = document.createElement('option');
-          opt.value = String(y);
-          opt.textContent = `${y} год`;
+          const yStr = String(y).trim();
+          if (yStr === '< 2000' || yStr === '<2000') {
+            opt.value = '<2000';
+            opt.textContent = 'До 2000 года (< 2000)';
+          } else {
+            opt.value = yStr;
+            opt.textContent = `${yStr} год`;
+          }
           yearSelect.appendChild(opt);
         });
 
-        yearSelect.value = currentYear;
+        if (currentYear === '< 2000' || currentYear === '<2000') {
+          yearSelect.value = '<2000';
+        } else {
+          yearSelect.value = currentYear;
+        }
+      })
+      .catch(() => {});
+  }
+
+  function loadGenres() {
+    if (['games', 'software', 'watchlist', 'ignored'].includes(state.category)) {
+      if (genreWrap) genreWrap.style.display = 'none';
+      return Promise.resolve();
+    }
+    if (genreWrap) genreWrap.style.display = 'flex';
+    return fetch(`/api/genres?category=${state.category}`)
+      .then(res => res.json())
+      .then(data => {
+        if (!data.genres || !genreSelect) return;
+        const currentGenre = state.genre || 'all';
+        genreSelect.innerHTML = '';
+
+        const optAll = document.createElement('option');
+        optAll.value = 'all';
+        optAll.textContent = 'Все жанры';
+        genreSelect.appendChild(optAll);
+
+        data.genres.forEach(g => {
+          const opt = document.createElement('option');
+          opt.value = g;
+          opt.textContent = g;
+          genreSelect.appendChild(opt);
+        });
+
+        genreSelect.value = currentGenre;
       })
       .catch(() => {});
   }
 
   function fetchReleases(isSilent = false) {
     updateCounts();
+    if (progressBar) progressBar.classList.add('active');
 
     // 1. "Не буду смотреть" (Compact Table View)
     if (state.category === 'ignored') {
@@ -330,6 +379,9 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .catch(err => {
           tableViewContainer.innerHTML = `<div style="color: #ef4444; padding: 20px;">Ошибка: ${err.message}</div>`;
+        })
+        .finally(() => {
+          if (progressBar) progressBar.classList.remove('active');
         });
       return;
     }
@@ -367,6 +419,9 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .catch(err => {
           cardsGrid.innerHTML = `<div style="grid-column: 1/-1; color: #ef4444; padding: 40px; text-align: center;">Ошибка: ${err.message}</div>`;
+        })
+        .finally(() => {
+          if (progressBar) progressBar.classList.remove('active');
         });
       return;
     }
@@ -452,6 +507,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isSilent) {
           cardsGrid.innerHTML = `<div style="grid-column: 1/-1; color: #ef4444; padding: 40px; text-align: center;">Ошибка загрузки данных: ${err.message}</div>`;
         }
+      })
+      .finally(() => {
+        if (progressBar) progressBar.classList.remove('active');
       });
   }
 
@@ -476,7 +534,7 @@ document.addEventListener('DOMContentLoaded', () => {
       card.onclick = () => openModal(item.torrent_id);
 
       const posterHtml = item.poster_url 
-        ? `<img class="poster-img" src="${item.poster_url}" alt="${item.title_ru}" loading="lazy" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'poster-placeholder\'>🎬</div>'"/>`
+        ? `<img class="poster-img" src="${item.poster_url}" alt="${item.title_ru}" loading="lazy" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';"/><div class="poster-placeholder" style="display:none;">🎬</div>`
         : `<div class="poster-placeholder" style="animation: pulse 1.5s infinite;">⏳ Подгрузка обложки...</div>`;
 
       let ratingBadges = '';
@@ -487,13 +545,29 @@ document.addEventListener('DOMContentLoaded', () => {
         ratingBadges += `<div class="badge-rating imdb-badge" title="IMDb">IMDb ${item.imdb_rating}</div>`;
       }
 
+      // Status badges for items in watchlist or ignored
+      let statusBadgeHtml = '';
+      if (item.user_status === 'watchlist' || item.user_status === 'watchlist_alt') {
+        statusBadgeHtml = `<div class="card-status-badge badge-status-watchlist">💚 В списке «Буду смотреть»</div>`;
+      } else if (item.user_status === 'ignored' || item.user_status === 'ignored_alt') {
+        statusBadgeHtml = `<div class="card-status-badge badge-status-ignored">🚫 В списке «Не буду смотреть»</div>`;
+      }
+
       const escapedTitle = (item.title_ru || '').replace(/'/g, "\\'");
       let hoverActionsHtml = '';
-      if (isWatchlist) {
+      if (isWatchlist || item.user_status === 'watchlist' || item.user_status === 'watchlist_alt') {
         hoverActionsHtml = `
           <div class="card-hover-actions">
             <button class="btn-card-action btn-card-ignore" onclick="event.stopPropagation(); removeFromWatchlist('${item.torrent_id}')">
               ✕ Убрать из списка
+            </button>
+          </div>
+        `;
+      } else if (item.user_status === 'ignored' || item.user_status === 'ignored_alt') {
+        hoverActionsHtml = `
+          <div class="card-hover-actions">
+            <button class="btn-card-action btn-card-watch" onclick="event.stopPropagation(); restoreFromIgnored('${item.torrent_id}')">
+              ↩️ Вернуть в радар
             </button>
           </div>
         `;
@@ -513,6 +587,7 @@ document.addEventListener('DOMContentLoaded', () => {
       card.innerHTML = `
         <div class="poster-wrap">
           ${posterHtml}
+          ${statusBadgeHtml}
           ${hoverActionsHtml}
           <div class="badge-quality">${item.quality || 'HD'}</div>
           <div class="card-ratings-wrap">${ratingBadges}</div>

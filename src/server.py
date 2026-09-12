@@ -148,9 +148,13 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         qualities = params.get("quality", None)
         if qualities:
             qualities = qualities[0].split(",") if isinstance(qualities[0], str) else qualities
-
+        if year == "all":
+            y_desc = "все годы"
+        elif str(year).strip().lower() in ("< 2000", "<2000", "pre2000", "old"):
+            y_desc = "до 2000 года"
+        else:
+            y_desc = f"{year} г."
         q_desc = ",".join(qualities) if qualities else "любое"
-        y_desc = "все годы" if year == "all" else f"{year} г."
         log(f"📡 [РАДАР] Запрос витрины [{category}], {y_desc}, происхождение: {origin}, жанр: {genre}, рейтинг: >={min_rating}, качество: {q_desc}, стр. {page}", "INFO")
 
         # If user is searching by title/query, perform deep search on tracker archive
@@ -199,6 +203,11 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         category = params.get("category", ["movies"])[0]
         years = database.get_distinct_years(category)
         self.send_json({"years": years})
+
+    def handle_api_genres(self, params):
+        category = params.get("category", ["movies"])[0]
+        genres = database.get_distinct_genres(category)
+        self.send_json({"genres": genres})
 
     def handle_api_item(self, params):
         item_id = params.get("id", [""])[0]
@@ -265,6 +274,9 @@ def run_server(port=PORT):
     log(f" RADAR Server запущен на http://127.0.0.1:{port}", "SUCCESS")
     log(f"============================================================", "SUCCESS")
     
+    # Auto-fix existing countries in background
+    threading.Thread(target=tracker_engine.fix_existing_countries_in_db, daemon=True).start()
+
     # Auto-scan initial categories if database is fresh
     for cat in ["movies", "series", "anime", "games", "software"]:
         count = database.query_releases(category=cat, days=0, max_size=0, min_rating=0, year="all")["total"]

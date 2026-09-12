@@ -8,16 +8,39 @@ DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "radar.db")
 
-DEFAULT_GENRES = [
+CORE_GENRES = [
     "Боевик", "Комедия", "Драма", "Фантастика", "Триллер",
     "Детектив", "Ужасы", "Приключения", "Криминал", "Фэнтези",
-    "Мелодрама", "Мультфильм", "Документальный", "Семейный",
-    "Военный", "Биография", "Исторический", "Спорт", "Аниме"
+    "Мелодрама", "Мультфильм", "Документальный", "Военный"
 ]
+DEFAULT_GENRES = CORE_GENRES
+
+def _py_lower(s):
+    if s is None:
+        return ""
+    return str(s).lower()
+
+def _py_like(pattern, value):
+    if pattern is None or value is None:
+        return False
+    pat = str(pattern).lower()
+    val = str(value).lower()
+    parts = []
+    for ch in pat:
+        if ch == '%':
+            parts.append('.*')
+        elif ch == '_':
+            parts.append('.')
+        else:
+            parts.append(re.escape(ch))
+    regex = '^' + ''.join(parts) + '$'
+    return bool(re.match(regex, val, re.DOTALL))
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH, timeout=10.0)
     conn.row_factory = sqlite3.Row
+    conn.create_function("lower", 1, _py_lower)
+    conn.create_function("like", 2, _py_like)
     return conn
 
 def init_db():
@@ -194,8 +217,13 @@ def query_releases(category="movies", min_rating=0.0, max_size=15.0,
     conn = get_connection()
     c = conn.cursor()
 
-    conditions = ["category = ?", "(user_status IS NULL OR user_status = 'new')"]
+    conditions = ["category = ?"]
     params = [category]
+
+    # If NOT searching by title, exclude watchlist and ignored from the discovery feed!
+    # If searching by title, return all items regardless of user_status (so status badges can show)
+    if not (search and search.strip()):
+        conditions.append("(user_status IS NULL OR user_status = 'new')")
 
     # Origin filter (Russian vs Foreign vs All)
     if origin == "russian":
@@ -205,13 +233,17 @@ def query_releases(category="movies", min_rating=0.0, max_size=15.0,
 
     # Year filter
     if year and str(year) != "all":
-        try:
-            y_val = int(year)
-            if y_val > 0:
-                conditions.append("year = ?")
-                params.append(y_val)
-        except ValueError:
-            pass
+        y_str = str(year).strip().lower()
+        if y_str in ("< 2000", "<2000", "pre-2000", "pre2000", "old"):
+            conditions.append("year < 2000 AND year > 0")
+        else:
+            try:
+                y_val = int(year)
+                if y_val > 0:
+                    conditions.append("year = ?")
+                    params.append(y_val)
+            except ValueError:
+                pass
 
     # Size filter
     if max_size and max_size > 0:
@@ -232,25 +264,31 @@ def query_releases(category="movies", min_rating=0.0, max_size=15.0,
             params.append(f"%{q}%")
         conditions.append("(" + " OR ".join(q_conds) + ")")
 
-    # Genre filter
+    # Genre filter (case-insensitive)
     if genre and genre != "all":
-        conditions.append("genre LIKE ?")
-        params.append(f"%{genre}%")
+        conditions.append("lower(genre) LIKE ?")
+        params.append(f"%{genre.strip().lower()}%")
 
-    # Search filter
+    # Search filter (case-insensitive Unicode)
     if search and search.strip():
-        s = f"%{search.strip()}%"
-        conditions.append("(title_ru LIKE ? OR title_en LIKE ? OR title LIKE ? OR actors LIKE ? OR director LIKE ?)")
+        s = f"%{search.strip().lower()}%"
+        conditions.append("(lower(title_ru) LIKE ? OR lower(title_en) LIKE ? OR lower(title) LIKE ? OR lower(actors) LIKE ? OR lower(director) LIKE ?)")
         params.extend([s, s, s, s, s])
 
     where_clause = " WHERE " + " AND ".join(conditions)
 
     if deduplicate:
-        # Deduplicate by grouping movie title and year, picking release with highest seeds
+        # Deduplicate by grouping movie title and year, prioritizing active user statuses, then picking release with highest seeds
         dedup_sql = f"""
         SELECT id, ROW_NUMBER() OVER (
             PARTITION BY LOWER(TRIM(COALESCE(NULLIF(title_ru, ''), title))), year
-            ORDER BY seeds DESC, size_gb DESC
+            ORDER BY 
+                CASE 
+                    WHEN user_status IN ('watchlist', 'ignored') THEN 0
+                    WHEN user_status IN ('watchlist_alt', 'ignored_alt') THEN 1
+                    ELSE 2 
+                END ASC,
+                seeds DESC, size_gb DESC
         ) as rn
         FROM releases
         {where_clause}
@@ -281,7 +319,15 @@ def query_releases(category="movies", min_rating=0.0, max_size=15.0,
         """
         c.execute(data_sql, params + [limit, offset])
 
-    rows = [dict(r) for r in c.fetchall()]
+    raw_rows = [dict(r) for r in c.fetchall()]
+    rows = []
+    for row in raw_rows:
+        status = row.get("user_status", "new")
+        if status == "watchlist_alt":
+            row["user_status"] = "watchlist"
+        elif status == "ignored_alt":
+            row["user_status"] = "ignored"
+        rows.append(row)
     conn.close()
 
     return {
@@ -297,27 +343,39 @@ def add_to_watchlist(torrent_id):
     c = conn.cursor()
     c.execute("SELECT title_ru, year FROM releases WHERE torrent_id = ?", (str(torrent_id),))
     row = c.fetchone()
+    now = int(time.time())
     if row and row['title_ru']:
         title_ru = row['title_ru']
         year = row['year']
         c.execute("UPDATE releases SET user_status = 'watchlist', updated_at = ? WHERE torrent_id = ?",
-                  (int(time.time()), str(torrent_id)))
+                  (now, str(torrent_id)))
+        # Remove from ignored if was there
+        c.execute("DELETE FROM ignored_releases WHERE torrent_id = ? OR (lower(trim(title_ru)) = lower(trim(?)) AND year = ?)",
+                  (str(torrent_id), title_ru, year))
         # Hide duplicate releases of this same movie from the discovery feed
         c.execute("""
             UPDATE releases SET user_status = 'watchlist_alt', updated_at = ?
-            WHERE LOWER(TRIM(title_ru)) = LOWER(TRIM(?)) AND year = ? AND torrent_id != ?
-        """, (int(time.time()), title_ru, year, str(torrent_id)))
+            WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND torrent_id != ?
+        """, (now, title_ru, year, str(torrent_id)))
     else:
         c.execute("UPDATE releases SET user_status = 'watchlist', updated_at = ? WHERE torrent_id = ?",
-                  (int(time.time()), str(torrent_id)))
+                  (now, str(torrent_id)))
     conn.commit()
     conn.close()
 
 def remove_from_watchlist(torrent_id):
     conn = get_connection()
     c = conn.cursor()
+    c.execute("SELECT title_ru, year FROM releases WHERE torrent_id = ?", (str(torrent_id),))
+    row = c.fetchone()
+    now = int(time.time())
     c.execute("UPDATE releases SET user_status = 'new', updated_at = ? WHERE torrent_id = ?",
-              (int(time.time()), str(torrent_id)))
+              (now, str(torrent_id)))
+    if row and row['title_ru']:
+        c.execute("""
+            UPDATE releases SET user_status = 'new', updated_at = ?
+            WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ?
+        """, (now, row['title_ru'], row['year']))
     conn.commit()
     conn.close()
 
@@ -327,8 +385,8 @@ def query_watchlist(search=None, page=1, limit=15):
     conditions = ["user_status = 'watchlist'"]
     params = []
     if search and search.strip():
-        s = f"%{search.strip()}%"
-        conditions.append("(title_ru LIKE ? OR title_en LIKE ? OR title LIKE ?)")
+        s = f"%{search.strip().lower()}%"
+        conditions.append("(lower(title_ru) LIKE ? OR lower(title_en) LIKE ? OR lower(title) LIKE ?)")
         params.extend([s, s, s])
     where_clause = " WHERE " + " AND ".join(conditions)
 
@@ -352,6 +410,7 @@ def add_to_ignored(torrent_id):
     c = conn.cursor()
     c.execute("SELECT * FROM releases WHERE torrent_id = ?", (str(torrent_id),))
     row = c.fetchone()
+    now = int(time.time())
     if row:
         title_ru = row['title_ru']
         year = row['year']
@@ -362,14 +421,16 @@ def add_to_ignored(torrent_id):
         """, (
             str(torrent_id), row['category'], row['title'], row['title_ru'],
             row['title_en'], row['year'], row['genre'], row['kp_rating'],
-            row['imdb_rating'], int(time.time())
+            row['imdb_rating'], now
         ))
-        # Remove heavy record from releases to clear cache
-        c.execute("DELETE FROM releases WHERE torrent_id = ?", (str(torrent_id),))
-        # Purge all duplicate releases of the exact same title/year from cache
+        # Keep release with status 'ignored' so title search can show status badge
+        c.execute("UPDATE releases SET user_status = 'ignored', updated_at = ? WHERE torrent_id = ?",
+                  (now, str(torrent_id)))
         if title_ru:
-            c.execute("DELETE FROM releases WHERE LOWER(TRIM(title_ru)) = LOWER(TRIM(?)) AND year = ?",
-                      (title_ru, year))
+            c.execute("""
+                UPDATE releases SET user_status = 'ignored_alt', updated_at = ?
+                WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND torrent_id != ?
+            """, (now, title_ru, year, str(torrent_id)))
         conn.commit()
     conn.close()
 
@@ -377,6 +438,16 @@ def restore_from_ignored(torrent_id):
     conn = get_connection()
     c = conn.cursor()
     c.execute("DELETE FROM ignored_releases WHERE torrent_id = ?", (str(torrent_id),))
+    c.execute("SELECT title_ru, year FROM releases WHERE torrent_id = ?", (str(torrent_id),))
+    row = c.fetchone()
+    now = int(time.time())
+    c.execute("UPDATE releases SET user_status = 'new', updated_at = ? WHERE torrent_id = ?",
+              (now, str(torrent_id)))
+    if row and row['title_ru']:
+        c.execute("""
+            UPDATE releases SET user_status = 'new', updated_at = ?
+            WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ?
+        """, (now, row['title_ru'], row['year']))
     conn.commit()
     conn.close()
 
@@ -479,13 +550,15 @@ def get_release_by_id(item_id):
     return item
 
 def get_distinct_genres(category="movies"):
+    if category in ("movies", "series"):
+        return CORE_GENRES
     conn = get_connection()
     c = conn.cursor()
     c.execute("SELECT genre FROM releases WHERE category = ? AND genre != ''", (category,))
     rows = c.fetchall()
     conn.close()
 
-    genres = set(DEFAULT_GENRES if category in ("movies", "series", "anime") else [])
+    genres = set(CORE_GENRES if category in ("movies", "series") else [])
     for r in rows:
         g_str = r[0]
         for g in re.split(r'[,/|;]+', g_str):
@@ -496,18 +569,36 @@ def get_distinct_genres(category="movies"):
     return sorted(list(genres))
 
 def get_distinct_years(category="movies"):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("""
-        SELECT DISTINCT year FROM releases 
-        WHERE category = ? AND year >= 1990 AND year <= 2030
-        ORDER BY year DESC
-    """, (category,))
-    rows = c.fetchall()
-    conn.close()
-    years = [r[0] for r in rows if r[0]]
-    if 2026 not in years:
-        years.insert(0, 2026)
+    # Return concrete years 2026 down to 2000, plus "< 2000"
+    years = [str(y) for y in range(2026, 1999, -1)]
+    years.append("< 2000")
     return years
 
+def sync_ignored_to_releases():
+    """Ensure any releases in ignored_releases also exist in releases with user_status = 'ignored'"""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM ignored_releases")
+    rows = [dict(r) for r in c.fetchall()]
+    now = int(time.time())
+    for r in rows:
+        tid = r['torrent_id']
+        c.execute("SELECT 1 FROM releases WHERE torrent_id = ?", (tid,))
+        if not c.fetchone():
+            c.execute("""
+                INSERT INTO releases (
+                    torrent_id, category, title, title_ru, title_en, year, genre,
+                    kp_rating, imdb_rating, user_status, updated_at, date_ts
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ignored', ?, ?)
+            """, (
+                tid, r.get('category', 'movies'), r.get('title', ''), r.get('title_ru', ''),
+                r.get('title_en', ''), r.get('year', 0), r.get('genre', ''),
+                r.get('kp_rating', 0.0), r.get('imdb_rating', 0.0), now, r.get('created_at', now)
+            ))
+        else:
+            c.execute("UPDATE releases SET user_status = 'ignored', updated_at = ? WHERE torrent_id = ?", (now, tid))
+    conn.commit()
+    conn.close()
+
 init_db()
+sync_ignored_to_releases()

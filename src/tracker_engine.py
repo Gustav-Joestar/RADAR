@@ -110,13 +110,110 @@ def extract_quality(title, video_info=""):
         return '1080p'
     return '1080p'
 
-def detect_genre_from_title(title):
-    t_low = title.lower()
-    found = []
-    for g_name, kws in GENRE_KEYWORDS.items():
-        if any(kw in t_low for kw in kws):
-            found.append(g_name)
-    return ", ".join(found) if found else ""
+KNOWN_COUNTRIES = [
+    ("россия", "Россия"), ("ссср", "СССР"), ("рф", "Россия"),
+    ("сша", "США"), ("usa", "США"),
+    ("великобритания", "Великобритания"), ("британия", "Великобритания"), ("англия", "Великобритания"),
+    ("франция", "Франция"), ("германия", "Германия"), ("италия", "Италия"), ("испания", "Испания"),
+    ("канада", "Канада"), ("австралия", "Австралия"), ("япония", "Япония"), ("китай", "Китай"),
+    ("гонконг", "Гонконг"), ("тайвань", "Тайвань"), ("индия", "Индия"),
+    ("корея южная", "Южная Корея"), ("южная корея", "Южная Корея"), ("корея", "Южная Корея"),
+    ("бразилия", "Бразилия"), ("мексика", "Мексика"), ("аргентина", "Аргентина"),
+    ("индонезия", "Индонезия"), ("нидерланды", "Нидерланды"), ("бельгия", "Бельгия"),
+    ("швеция", "Швеция"), ("норвегия", "Норвегия"), ("дания", "Дания"), ("финляндия", "Финляндия"),
+    ("польша", "Польша"), ("чехия", "Чехия"), ("венгрия", "Венгрия"), ("австрия", "Австрия"),
+    ("швейцария", "Швейцария"), ("турция", "Турция"), ("ирландия", "Ирландия"), ("греция", "Греция"),
+    ("таиланд", "Таиланд"), ("новая зеландия", "Новая Зеландия"), ("юар", "ЮАР"),
+    ("исландия", "Исландия"), ("израиль", "Израиль"), ("румыния", "Румыния"),
+    ("португалия", "Португалия"), ("чили", "Чили"), ("колумбия", "Колумбия"),
+    ("перу", "Перу"), ("сербия", "Сербия"), ("хорватия", "Хорватия"),
+    ("украина", "Украина"), ("беларусь", "Беларусь"), ("казахстан", "Казахстан"),
+    ("грузия", "Грузия"), ("армения", "Армения"), ("болгария", "Болгария"),
+    ("эстония", "Эстония"), ("литва", "Литва"), ("латвия", "Латвия"),
+    ("египет", "Египет"), ("марокко", "Марокко"), ("иран", "Иран")
+]
+
+STUDIO_STOPWORDS = {
+    "entertainment", "pictures", "studios", "studio", "films", "film",
+    "productions", "production", "media", "cinema", "inc", "llc", "ltd",
+    "corp", "corporation", "company", "bros", "television", "tv",
+    "village", "roadshow", "castle", "rock", "warner", "universal", "paramount",
+    "columbia", "disney", "marvel", "netflix", "hbo", "sony", "fox", "lionsgate",
+    "mgm", "tri-star", "dreamworks", "orion", "miramax", "pixar", "lucasfilm"
+}
+
+def extract_clean_country(full_text):
+    if not full_text:
+        return ""
+
+    field_patterns = [
+        r'(?:Страна(?:\s*/\s*студия)?|Country)\s*:\s*([^\n\r]+)',
+        r'(?:Производство)\s*:\s*([^\n\r]+)',
+        r'(?:Выпущено)\s*:\s*([^\n\r]+)'
+    ]
+
+    candidates = []
+    for pat in field_patterns:
+        m = re.search(pat, full_text, re.IGNORECASE)
+        if m:
+            val = m.group(1).strip()
+            val = re.sub(r'\s+', ' ', val)
+            candidates.append(val)
+
+    # 1. Search for known canonical countries in candidate field lines
+    for cand in candidates:
+        cand_lower = cand.lower()
+        matched = []
+        for kw, canonical in KNOWN_COUNTRIES:
+            pos = cand_lower.find(kw)
+            if pos != -1:
+                matched.append((pos, canonical))
+        if matched:
+            matched.sort(key=lambda x: x[0])
+            return matched[0][1]
+
+    # 2. Check if first token in candidate is a clean non-studio word
+    for cand in candidates:
+        first_token = re.split(r'[,/|;]+', cand)[0].strip()
+        first_token_clean = re.sub(r'[^\w\s-]', '', first_token).strip()
+        token_words = set(first_token_clean.lower().split())
+        if first_token_clean and not token_words.intersection(STUDIO_STOPWORDS):
+            if 2 < len(first_token_clean) < 30 and len(first_token_clean.split()) <= 3 and not any(ch.isdigit() for ch in first_token_clean):
+                return first_token_clean.capitalize()
+
+    # 3. Fallback: scan full text for country mention
+    for kw, canonical in KNOWN_COUNTRIES:
+        if re.search(r'\b(?:страна|производство)\s*:[^\n\r]*?\b' + re.escape(kw) + r'\b', full_text, re.IGNORECASE):
+            return canonical
+
+    return ""
+
+def fix_existing_countries_in_db():
+    try:
+        conn = database.get_connection()
+        c = conn.cursor()
+        c.execute("SELECT id, country, description, video_info FROM releases WHERE category = 'movies'")
+        rows = c.fetchall()
+        updated_count = 0
+        for r in rows:
+            rid = r['id']
+            curr_country = (r['country'] or '').strip()
+            desc = (r['description'] or '') + ' ' + (r['video_info'] or '')
+            curr_lower = curr_country.lower()
+            needs_fix = not curr_country or any(sw in curr_lower for sw in STUDIO_STOPWORDS) or len(curr_country.split()) > 3
+            if needs_fix:
+                cleaned = extract_clean_country(f"Страна: {curr_country}\n{desc}")
+                # If cleaned is found and differs, update it; if it was an ugly sentence and no clean country found, reset to empty
+                target = cleaned if cleaned else ("" if len(curr_country.split()) > 3 else curr_country)
+                if target != curr_country:
+                    c.execute("UPDATE releases SET country = ? WHERE id = ?", (target, rid))
+                    updated_count += 1
+        conn.commit()
+        conn.close()
+        if updated_count > 0:
+            log(f"🧹 [СТРАНЫ] Исправлены названия стран для {updated_count} фильмов в базе", "SUCCESS")
+    except Exception as e:
+        log(f"⚠️ Ошибка авто-исправления стран: {e}", "WARNING")
 
 def scan_category(category_name, year=2026, max_pages=1):
     year_label = f" (год: {year})" if year and year > 0 else ""
@@ -225,8 +322,8 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     title_ru = raw_title.split('(')[0].strip()
 
                 # Check if release was marked "Не буду смотреть"
-                if database.is_ignored(torrent_id, title_ru, rel_year):
-                    continue
+                is_ign = database.is_ignored(torrent_id, title_ru, rel_year)
+                initial_status = 'ignored' if is_ign else 'new'
 
                 # Check if release is already in persistent cache with full details
                 cached = database.get_release_by_id(torrent_id)
@@ -237,7 +334,6 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     continue
 
                 quality = extract_quality(raw_title)
-                initial_genre = detect_genre_from_title(raw_title)
 
                 item_data = {
                     "torrent_id": torrent_id,
@@ -258,7 +354,7 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     "audio_tracks": "[]",
                     "voiceover": "",
                     "subtitles": "",
-                    "genre": initial_genre,
+                    "genre": "",
                     "director": "",
                     "actors": "",
                     "description": "",
@@ -271,7 +367,8 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     "magnet_url": f"magnet:?xt=urn:btih:&dn={urllib.parse.quote(raw_title)}",
                     "source_url": f"http://rutor.info{href}",
                     "seasons_info": "[]",
-                    "mediainfo": ""
+                    "mediainfo": "",
+                    "user_status": initial_status
                 }
                 database.upsert_release(item_data)
                 scanned_torrent_ids.append(torrent_id)
@@ -318,13 +415,16 @@ def parse_full_details(torrent_id):
                 continue
             if src.startswith('//'):
                 src = 'https:' + src
-            if any(k in src.lower() for k in ['fastpic', 'postimg', 'radikal', 'imageban', 'lostpix', 'ibn.im', 'firepic', 'media', 'poster', 'images', 'pictures', 'photobank', 'hostingkartinok', 'imgur', 'kinopoisk', 'kinomania', 'pic']):
+            # Explicitly exclude dead radikal.ru domain
+            if 'radikal' in src.lower():
+                continue
+            if any(k in src.lower() for k in ['fastpic', 'postimg', 'imageban', 'lostpix', 'ibn.im', 'firepic', 'media', 'poster', 'images', 'pictures', 'photobank', 'hostingkartinok', 'imgur', 'kinopoisk', 'kinomania', 'pic']):
                 poster_url = src
                 break
         if not poster_url:
             for img in details_table.select('img'):
                 src = img.get('src', '')
-                if not src:
+                if not src or 'radikal' in src.lower():
                     continue
                 if src.startswith('//'):
                     src = 'https:' + src
@@ -346,7 +446,7 @@ def parse_full_details(torrent_id):
         genre = find_field([r'Жанр:\s*([^\n\r]+)', r'Genre:\s*([^\n\r]+)'])
         director = find_field([r'Режиссер:\s*([^\n\r]+)', r'Режиссёр:\s*([^\n\r]+)', r'Director:\s*([^\n\r]+)'])
         actors = find_field([r'В ролях:\s*([^\n\r]+)', r'Актеры:\s*([^\n\r]+)', r'Cast:\s*([^\n\r]+)'])
-        country = find_field([r'Выпущено:\s*([^\n\r]+)', r'Страна:\s*([^\n\r]+)', r'Country:\s*([^\n\r]+)'])
+        country = extract_clean_country(full_text)
         duration = find_field([r'Продолжительность:\s*([^\n\r]+)', r'Время:\s*([^\n\r]+)'])
         voiceover = find_field([r'Перевод:\s*([^\n\r]+)', r'Озвучивание:\s*([^\n\r]+)', r'Аудиоперевод:\s*([^\n\r]+)'])
         video_info = find_field([r'Видео:\s*([^\n\r]+)', r'Video:\s*([^\n\r]+)'])
@@ -372,13 +472,15 @@ def parse_full_details(torrent_id):
                 if p and p.lower() != 'нет':
                     subtitles_list.append(p)
 
-        # 1. Fetch ratings from Kinopoisk and IMDb
+        # 1. Fetch ratings from Kinopoisk and IMDb, and use Kinopoisk poster as fallback
         kp_rating = 0.0
         imdb_rating = 0.0
 
         kp_m = re.search(r'kinopoisk\.ru/film/(\d+)', html)
         if kp_m:
             kp_id = kp_m.group(1)
+            if not poster_url or 'radikal' in poster_url:
+                poster_url = f"https://st.kp.yandex.net/images/film_iphone/iphone360_{kp_id}.jpg"
             try:
                 r_kp = requests.get(f'https://rating.kinopoisk.ru/{kp_id}.xml', timeout=4)
                 if r_kp.status_code == 200:

@@ -57,6 +57,42 @@ body {
   border-bottom: 1px solid var(--border-color);
 }
 
+/* Global Full-Width Loading Progress Bar */
+.global-progress-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 2.5px;
+  background: transparent;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1000;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.global-progress-bar.active {
+  opacity: 1;
+}
+
+.global-progress-bar.active::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, var(--accent), #38bdf8, transparent);
+  box-shadow: 0 0 12px var(--accent), 0 0 6px #38bdf8;
+  animation: globalProgressMove 1.15s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes globalProgressMove {
+  0% { left: -45%; }
+  100% { left: 100%; }
+}
+
 .header-container {
   max-width: 1560px;
   margin: 0 auto;
@@ -517,6 +553,39 @@ select:focus {
 .badge-rating.imdb-badge {
   background: #f5c518;
   color: #000000;
+}
+
+/* Card Status Badges (Watchlist / Ignored) */
+.card-status-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 5;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 8px;
+  border-radius: 7px;
+  text-align: center;
+  backdrop-filter: blur(8px);
+  letter-spacing: 0.2px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.badge-status-watchlist {
+  background: rgba(16, 185, 129, 0.9);
+  color: #ffffff;
+  border: 1px solid rgba(52, 211, 153, 0.6);
+}
+
+.badge-status-ignored {
+  background: rgba(239, 68, 68, 0.9);
+  color: #ffffff;
+  border: 1px solid rgba(248, 113, 113, 0.6);
 }
 
 /* Card Hover Quick Actions */
