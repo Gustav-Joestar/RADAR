@@ -3,7 +3,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const state = {
     category: 'movies',
     year: '2026',
-    days: 7,
     min_rating: 0.0,
     max_size: 15.0,
     qualities: ['1080p', '720p'],
@@ -16,6 +15,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // DOM Elements
   const cardsGrid = document.getElementById('cards-grid');
+  const tableViewContainer = document.getElementById('table-view-container');
+  const ignoredTableBody = document.getElementById('ignored-table-body');
+  const countWatchlist = document.getElementById('count-watchlist');
+  const countIgnored = document.getElementById('count-ignored');
   const emptyState = document.getElementById('empty-state');
   const resultsCount = document.getElementById('results-count');
   const currentPageSpan = document.getElementById('current-page');
@@ -50,12 +53,14 @@ document.addEventListener('DOMContentLoaded', () => {
   initEventListeners();
   loadYears();
   loadGenres();
+  updateCounts();
   fetchReleases();
   pollLogs();
   setInterval(pollLogs, 2000);
+  setInterval(updateCounts, 5000);
 
   function initEventListeners() {
-    // Category Tabs
+    // Category & List Tabs
     document.querySelectorAll('.cat-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
@@ -63,20 +68,32 @@ document.addEventListener('DOMContentLoaded', () => {
         state.category = btn.dataset.category;
         state.page = 1;
 
-        if (state.category === 'games' || state.category === 'software') {
+        if (state.category === 'watchlist' || state.category === 'ignored') {
           ratingWrap.style.display = 'none';
           qualityWrap.style.display = 'none';
           yearWrap.style.display = 'none';
+          if (genreWrap) genreWrap.style.display = 'none';
+          if (sizeSlider) sizeSlider.parentElement.style.display = 'none';
+        } else if (state.category === 'games' || state.category === 'software') {
+          ratingWrap.style.display = 'none';
+          qualityWrap.style.display = 'none';
+          yearWrap.style.display = 'none';
+          if (genreWrap) genreWrap.style.display = 'flex';
+          if (sizeSlider) sizeSlider.parentElement.style.display = 'flex';
           state.min_rating = 0.0;
         } else {
           ratingWrap.style.display = 'flex';
           qualityWrap.style.display = 'flex';
           yearWrap.style.display = 'flex';
+          if (genreWrap) genreWrap.style.display = 'flex';
+          if (sizeSlider) sizeSlider.parentElement.style.display = 'flex';
           state.min_rating = ratingToggle.checked ? 7.0 : 0.0;
         }
 
-        loadYears();
-        loadGenres();
+        if (!['watchlist', 'ignored'].includes(state.category)) {
+          loadYears();
+          loadGenres();
+        }
         fetchReleases();
       });
     });
@@ -89,17 +106,6 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchReleases();
       });
     }
-
-    // Date Period Buttons
-    document.querySelectorAll('#date-buttons .toggle-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('#date-buttons .toggle-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        state.days = parseInt(btn.dataset.days);
-        state.page = 1;
-        fetchReleases();
-      });
-    });
 
     // Quality Checkboxes
     ['q-1080p', 'q-720p', 'q-4k'].forEach(id => {
@@ -208,10 +214,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     btnNext.addEventListener('click', () => {
-      if (state.page < state.totalPages) {
-        state.page++;
-        fetchReleases();
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+      state.page++;
+      fetchReleases();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+
+      // In discovery mode, automatically trigger crawl of next tracker page in background
+      if (!['watchlist', 'ignored'].includes(state.category)) {
+        fetch('/api/scan_more', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: state.category, year: state.year })
+        }).catch(() => {});
       }
     });
 
@@ -238,7 +251,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function resetFilters() {
     state.year = '2026';
-    state.days = 7;
     state.min_rating = 0.0;
     state.max_size = 15.0;
     state.qualities = ['1080p', '720p'];
@@ -247,25 +259,34 @@ document.addEventListener('DOMContentLoaded', () => {
     state.page = 1;
 
     if (yearSelect) yearSelect.value = '2026';
-    searchInput.value = '';
-    sizeSlider.value = 15;
-    sizeVal.textContent = '15 GB';
-    ratingToggle.checked = false;
-    genreSelect.value = 'all';
+    if (searchInput) searchInput.value = '';
+    if (sizeSlider) sizeSlider.value = 15;
+    if (sizeVal) sizeVal.textContent = '15 GB';
+    if (ratingToggle) ratingToggle.checked = false;
+    if (genreSelect) genreSelect.value = 'all';
 
-    document.getElementById('q-1080p').checked = true;
-    document.getElementById('q-720p').checked = true;
-    document.getElementById('q-4k').checked = false;
-
-    document.querySelectorAll('#date-buttons .toggle-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.days === '7');
-    });
+    const q1080 = document.getElementById('q-1080p');
+    const q720 = document.getElementById('q-720p');
+    const q4k = document.getElementById('q-4k');
+    if (q1080) q1080.checked = true;
+    if (q720) q720.checked = true;
+    if (q4k) q4k.checked = false;
 
     fetchReleases();
   }
 
+  function updateCounts() {
+    fetch('/api/counts')
+      .then(res => res.json())
+      .then(counts => {
+        if (countWatchlist) countWatchlist.textContent = counts.watchlist || 0;
+        if (countIgnored) countIgnored.textContent = counts.ignored || 0;
+      })
+      .catch(() => {});
+  }
+
   function loadYears() {
-    if (['games', 'software'].includes(state.category)) {
+    if (['games', 'software', 'watchlist', 'ignored'].includes(state.category)) {
       if (yearWrap) yearWrap.style.display = 'none';
       return;
     }
@@ -302,6 +323,85 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function fetchReleases(isSilent = false) {
+    updateCounts();
+
+    // 1. "Не буду смотреть" (Compact Table View)
+    if (state.category === 'ignored') {
+      cardsGrid.style.display = 'none';
+      tableViewContainer.style.display = 'block';
+
+      const p = new URLSearchParams({
+        search: state.search,
+        page: state.page,
+        limit: state.limit
+      });
+
+      fetch(`/api/ignored?${p.toString()}`)
+        .then(res => res.json())
+        .then(data => {
+          renderIgnoredTable(data.items);
+          state.totalPages = data.pages;
+          currentPageSpan.textContent = data.page;
+          totalPagesSpan.textContent = data.pages;
+          resultsCount.textContent = `Отклонённых фильмов: ${data.total} (показано ${data.items.length})`;
+          btnPrev.disabled = data.page <= 1;
+          btnNext.disabled = data.page >= data.pages;
+
+          if (data.total === 0) {
+            tableViewContainer.style.display = 'none';
+            emptyState.style.display = 'block';
+          } else {
+            emptyState.style.display = 'none';
+          }
+          consoleStatusText.textContent = `Отклонённые фильмы: ${data.total} в чёрном списке`;
+        })
+        .catch(err => {
+          tableViewContainer.innerHTML = `<div style="color: #ef4444; padding: 20px;">Ошибка: ${err.message}</div>`;
+        });
+      return;
+    }
+
+    // 2. "Буду смотреть" (Watchlist Grid View)
+    if (state.category === 'watchlist') {
+      tableViewContainer.style.display = 'none';
+      cardsGrid.style.display = 'grid';
+
+      const p = new URLSearchParams({
+        search: state.search,
+        page: state.page,
+        limit: state.limit
+      });
+
+      fetch(`/api/watchlist?${p.toString()}`)
+        .then(res => res.json())
+        .then(data => {
+          renderCards(data.items, true);
+          state.totalPages = data.pages;
+          currentPageSpan.textContent = data.page;
+          totalPagesSpan.textContent = data.pages;
+          resultsCount.textContent = `В списке «Буду смотреть»: ${data.total} (показано ${data.items.length})`;
+          btnPrev.disabled = data.page <= 1;
+          btnNext.disabled = data.page >= data.pages;
+
+          if (data.total === 0) {
+            cardsGrid.style.display = 'none';
+            emptyState.style.display = 'block';
+          } else {
+            cardsGrid.style.display = 'grid';
+            emptyState.style.display = 'none';
+          }
+          consoleStatusText.textContent = `Буду смотреть: ${data.total} отобранных фильмов`;
+        })
+        .catch(err => {
+          cardsGrid.innerHTML = `<div style="grid-column: 1/-1; color: #ef4444; padding: 40px; text-align: center;">Ошибка: ${err.message}</div>`;
+        });
+      return;
+    }
+
+    // 3. Regular Discovery Grid View (movies, series, anime, games, software)
+    tableViewContainer.style.display = 'none';
+    cardsGrid.style.display = 'grid';
+
     if (!isSilent) {
       cardsGrid.innerHTML = `
         <div style="grid-column: 1/-1; text-align: center; padding: 60px 0; color: var(--text-muted);">
@@ -314,7 +414,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const params = new URLSearchParams({
       category: state.category,
       year: state.year,
-      days: state.days,
       min_rating: state.min_rating,
       max_size: state.max_size,
       genre: state.genre,
@@ -335,14 +434,14 @@ document.addEventListener('DOMContentLoaded', () => {
     fetch(`/api/items?${params.toString()}`)
       .then(res => res.json())
       .then(data => {
-        renderCards(data.items);
+        renderCards(data.items, false);
         state.totalPages = data.pages;
         currentPageSpan.textContent = data.page;
         totalPagesSpan.textContent = data.pages;
         resultsCount.textContent = `Найдено релизов: ${data.total} (показано ${data.items.length})`;
 
         btnPrev.disabled = data.page <= 1;
-        btnNext.disabled = data.page >= data.pages;
+        btnNext.disabled = false; // allow clicking next to fetch more on the fly
 
         if (data.total === 0) {
           cardsGrid.style.display = 'none';
@@ -358,7 +457,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (hasMissingPosters && !posterPollInterval) {
           posterPollInterval = setTimeout(() => {
             posterPollInterval = null;
-            fetchReleases(true); // silent re-fetch to load freshly parsed posters
+            fetchReleases(true); // silent re-fetch
           }, 2500);
         }
       })
@@ -369,11 +468,12 @@ document.addEventListener('DOMContentLoaded', () => {
       });
   }
 
-  function renderCards(items) {
+  function renderCards(items, isWatchlist = false) {
     cardsGrid.innerHTML = '';
     items.forEach(item => {
       const card = document.createElement('div');
       card.className = 'media-card';
+      card.id = `card-${item.torrent_id}`;
       card.onclick = () => openModal(item.torrent_id);
 
       const posterHtml = item.poster_url 
@@ -388,14 +488,33 @@ document.addEventListener('DOMContentLoaded', () => {
         ratingBadges += `<div class="badge-rating imdb-badge" title="IMDb">IMDb ${item.imdb_rating}</div>`;
       }
 
-      const qualityBadge = item.quality 
-        ? `<div class="badge-quality">${item.quality}</div>`
-        : '';
+      let hoverActionsHtml = '';
+      if (isWatchlist) {
+        hoverActionsHtml = `
+          <div class="card-hover-actions">
+            <button class="btn-card-action btn-card-ignore" onclick="event.stopPropagation(); removeFromWatchlist('${item.torrent_id}')">
+              ✕ Убрать из списка
+            </button>
+          </div>
+        `;
+      } else {
+        hoverActionsHtml = `
+          <div class="card-hover-actions">
+            <button class="btn-card-action btn-card-watch" onclick="event.stopPropagation(); addToWatchlist('${item.torrent_id}')">
+              💚 Буду смотреть
+            </button>
+            <button class="btn-card-action btn-card-ignore" onclick="event.stopPropagation(); addToIgnored('${item.torrent_id}')">
+              🚫 Не буду смотреть
+            </button>
+          </div>
+        `;
+      }
 
       card.innerHTML = `
         <div class="poster-wrap">
           ${posterHtml}
-          ${qualityBadge}
+          ${hoverActionsHtml}
+          <div class="badge-quality">${item.quality || 'HD'}</div>
           <div class="card-ratings-wrap">${ratingBadges}</div>
         </div>
         <div class="card-content">
@@ -414,6 +533,98 @@ document.addEventListener('DOMContentLoaded', () => {
       cardsGrid.appendChild(card);
     });
   }
+
+  function renderIgnoredTable(items) {
+    if (!ignoredTableBody) return;
+    ignoredTableBody.innerHTML = items.map(item => {
+      let rHtml = '';
+      if (item.kp_rating > 0) rHtml += `<span class="badge-rating kp-badge" style="position:static; margin-right:4px;">КП ${item.kp_rating}</span>`;
+      if (item.imdb_rating > 0) rHtml += `<span class="badge-rating imdb-badge" style="position:static;">IMDb ${item.imdb_rating}</span>`;
+      if (!rHtml) rHtml = '<span style="color:var(--text-muted);">—</span>';
+
+      return `
+        <tr id="row-ign-${item.torrent_id}">
+          <td>
+            <div class="table-title-main">${item.title_ru}</div>
+            ${item.title_en ? `<div class="table-title-sub">${item.title_en}</div>` : ''}
+          </td>
+          <td><strong>${item.year || '—'}</strong></td>
+          <td>${item.genre || '—'}</td>
+          <td>${rHtml}</td>
+          <td style="text-align: right;">
+            <button class="btn-restore" onclick="restoreFromIgnored('${item.torrent_id}')">
+              ↩️ Вернуть в радар
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  // Global actions for card hover and buttons
+  window.addToWatchlist = function(torrentId) {
+    const card = document.getElementById(`card-${torrentId}`);
+    if (card) {
+      card.classList.add('card-removing');
+      setTimeout(() => card.remove(), 260);
+    }
+    fetch('/api/watchlist/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ torrent_id: torrentId })
+    })
+    .then(r => r.json())
+    .then(() => updateCounts())
+    .catch(() => {});
+  };
+
+  window.addToIgnored = function(torrentId) {
+    const card = document.getElementById(`card-${torrentId}`);
+    if (card) {
+      card.classList.add('card-removing');
+      setTimeout(() => card.remove(), 260);
+    }
+    fetch('/api/ignored/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ torrent_id: torrentId })
+    })
+    .then(r => r.json())
+    .then(() => updateCounts())
+    .catch(() => {});
+  };
+
+  window.removeFromWatchlist = function(torrentId) {
+    const card = document.getElementById(`card-${torrentId}`);
+    if (card) {
+      card.classList.add('card-removing');
+      setTimeout(() => card.remove(), 260);
+    }
+    fetch('/api/watchlist/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ torrent_id: torrentId })
+    })
+    .then(r => r.json())
+    .then(() => updateCounts())
+    .catch(() => {});
+  };
+
+  window.restoreFromIgnored = function(torrentId) {
+    const row = document.getElementById(`row-ign-${torrentId}`);
+    if (row) {
+      row.style.opacity = '0';
+      setTimeout(() => row.remove(), 250);
+    }
+    fetch('/api/ignored/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ torrent_id: torrentId })
+    })
+    .then(r => r.json())
+    .then(() => updateCounts())
+    .catch(() => {});
+  };
 
   function openModal(torrentId) {
     modalOverlay.style.display = 'flex';
@@ -500,6 +711,16 @@ document.addEventListener('DOMContentLoaded', () => {
           ? `<img class="modal-poster" src="${item.poster_url}" alt="Постер" onerror="this.style.display='none'"/>` 
           : '<div class="poster-placeholder" style="border-radius:12px; height: 380px;">🎬</div>'}
         
+        <!-- Modal Quick Actions -->
+        <div style="display: flex; gap: 8px; margin: 10px 0;">
+          <button class="btn-card-action btn-card-watch" style="flex:1;" onclick="addToWatchlist('${item.torrent_id}'); closeModal();">
+            💚 Буду смотреть
+          </button>
+          <button class="btn-card-action btn-card-ignore" style="flex:1;" onclick="addToIgnored('${item.torrent_id}'); closeModal();">
+            🚫 Не буду
+          </button>
+        </div>
+
         <a href="${item.torrent_url}" class="btn-download-torrent" target="_blank">
           ⬇ Скачать .torrent (${item.size_str || `${item.size_gb} GB`})
         </a>

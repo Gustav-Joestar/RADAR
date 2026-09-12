@@ -118,22 +118,40 @@ def detect_genre_from_title(title):
             found.append(g_name)
     return ", ".join(found) if found else ""
 
-def scan_category(category_name, year=2026, max_pages=2):
+def scan_category(category_name, year=2026, max_pages=1):
     year_label = f" (год: {year})" if year and year > 0 else ""
     log(f"Начало радарного сканирования категории [{category_name}]{year_label}...", "INFO")
     cat_ids = CATEGORY_MAP.get(category_name, [1])
+    urls_to_scan = list(CATEGORY_HUBS.get(category_name, []))
+    for cat_id in cat_ids:
+        for p in range(max_pages):
+            if year and year > 0 and category_name in ("movies", "series", "anime"):
+                urls_to_scan.append(f"http://rutor.info/search/{p}/{cat_id}/0/0/{year}")
+            else:
+                urls_to_scan.append(f"http://rutor.info/browse/{p}/{cat_id}/0/0")
+
+    return _process_tracker_urls(urls_to_scan, category_name, year)
+
+def scan_next_tracker_page(category_name, year=2026):
+    cat_ids = CATEGORY_MAP.get(category_name, [1])
+    page = database.get_crawl_page(category_name, year)
+    year_label = f" (год: {year})" if year and year > 0 else ""
+    log(f"📡 [РАДАР] Запрос следующей страницы трекера (#{page}) [{category_name}]{year_label}...", "INFO")
+    urls_to_scan = []
+    for cat_id in cat_ids:
+        if year and year > 0 and category_name in ("movies", "series", "anime"):
+            urls_to_scan.append(f"http://rutor.info/search/{page}/{cat_id}/0/0/{year}")
+        else:
+            urls_to_scan.append(f"http://rutor.info/browse/{page}/{cat_id}/0/0")
+
+    res = _process_tracker_urls(urls_to_scan, category_name, year)
+    database.advance_crawl_page(category_name, year)
+    return res
+
+def _process_tracker_urls(urls_to_scan, category_name, year):
     scanned_torrent_ids = []
     unique_titles_to_fetch = []
     seen_titles = set()
-
-    # Build target URLs: Hubs (kino, nashe_kino) + year search pages
-    urls_to_scan = list(CATEGORY_HUBS.get(category_name, []))
-    for cat_id in cat_ids:
-        for page in range(max_pages):
-            if year and year > 0 and category_name in ("movies", "series", "anime"):
-                urls_to_scan.append(f"http://rutor.info/search/{page}/{cat_id}/0/0/{year}")
-            else:
-                urls_to_scan.append(f"http://rutor.info/browse/{page}/{cat_id}/0/0")
 
     for url in urls_to_scan:
         log(f"📡 [СКАНЕР] Проверка страницы: {url}", "DEBUG")
@@ -174,14 +192,6 @@ def scan_category(category_name, year=2026, max_pages=2):
                 if seeds == 0 and peers == 0 and size_gb == 0:
                     continue
 
-                # Check if release is already in persistent cache with full details
-                cached = database.get_release_by_id(torrent_id)
-                if cached and (cached.get("description") or cached.get("poster_url") or cached.get("kp_rating") or cached.get("imdb_rating")):
-                    # ALREADY IN CACHE: update only live seed/peer/size stats
-                    database.update_tracker_stats(torrent_id, seeds, peers, size_gb, size_str, date_str, date_ts)
-                    scanned_torrent_ids.append(torrent_id)
-                    continue
-
                 title_ru = raw_title
                 title_en = ""
                 rel_year = year if (year and year > 0) else 0
@@ -197,6 +207,18 @@ def scan_category(category_name, year=2026, max_pages=2):
                     title_en = second.split('(')[0].strip() if '(' in second else second.split('|')[0].strip()
                 elif '(' in raw_title:
                     title_ru = raw_title.split('(')[0].strip()
+
+                # Check if release was marked "Не буду смотреть"
+                if database.is_ignored(torrent_id, title_ru, rel_year):
+                    continue
+
+                # Check if release is already in persistent cache with full details
+                cached = database.get_release_by_id(torrent_id)
+                if cached and (cached.get("description") or cached.get("poster_url") or cached.get("kp_rating") or cached.get("imdb_rating")):
+                    # ALREADY IN CACHE: update only live seed/peer/size stats
+                    database.update_tracker_stats(torrent_id, seeds, peers, size_gb, size_str, date_str, date_ts)
+                    scanned_torrent_ids.append(torrent_id)
+                    continue
 
                 quality = extract_quality(raw_title)
                 initial_genre = detect_genre_from_title(raw_title)
@@ -255,6 +277,7 @@ def scan_category(category_name, year=2026, max_pages=2):
             list(executor.map(parse_full_details, unique_titles_to_fetch))
 
     log(f"Категория [{category_name}] полностью актуализирована!", "SUCCESS")
+    return len(scanned_torrent_ids)
 
 def parse_full_details(torrent_id):
     url = f"http://rutor.info/torrent/{torrent_id}"

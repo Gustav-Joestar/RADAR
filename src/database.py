@@ -58,12 +58,46 @@ def init_db():
         source_url TEXT,
         seasons_info TEXT,
         mediainfo TEXT,
+        user_status TEXT DEFAULT 'new',
         updated_at INTEGER
     )
     """)
+    # Migration: add user_status if table already existed without it
+    c.execute("PRAGMA table_info(releases)")
+    cols = [r[1] for r in c.fetchall()]
+    if "user_status" not in cols:
+        c.execute("ALTER TABLE releases ADD COLUMN user_status TEXT DEFAULT 'new'")
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS ignored_releases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        torrent_id TEXT UNIQUE,
+        category TEXT DEFAULT 'movies',
+        title TEXT,
+        title_ru TEXT,
+        title_en TEXT,
+        year INTEGER,
+        genre TEXT,
+        kp_rating REAL DEFAULT 0.0,
+        imdb_rating REAL DEFAULT 0.0,
+        created_at INTEGER
+    )
+    """)
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS crawl_progress (
+        category TEXT,
+        year INTEGER,
+        next_page INTEGER DEFAULT 1,
+        PRIMARY KEY (category, year)
+    )
+    """)
+
     c.execute("CREATE INDEX IF NOT EXISTS idx_cat_date ON releases(category, date_ts DESC)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cat_size ON releases(category, size_gb)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cat_rating ON releases(category, imdb_rating, kp_rating)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_releases_status ON releases(category, user_status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ign_title ON ignored_releases(title_ru, year)")
     conn.commit()
     conn.close()
 
@@ -77,9 +111,12 @@ def upsert_release(data):
         "quality", "video_info", "audio_info", "audio_tracks", "voiceover",
         "subtitles", "genre", "director", "actors", "description", "country",
         "duration", "imdb_rating", "kp_rating", "poster_url", "torrent_url",
-        "magnet_url", "source_url", "seasons_info", "mediainfo", "updated_at"
+        "magnet_url", "source_url", "seasons_info", "mediainfo", "user_status", "updated_at"
     ]
     data["updated_at"] = now
+    if "user_status" not in data or not data["user_status"]:
+        data["user_status"] = "new"
+
     placeholders = ", ".join(["?"] * len(fields))
     columns = ", ".join(fields)
     
@@ -116,6 +153,7 @@ def upsert_release(data):
         "source_url = excluded.source_url",
         "seasons_info = CASE WHEN excluded.seasons_info != '' AND excluded.seasons_info != '[]' THEN excluded.seasons_info ELSE releases.seasons_info END",
         "mediainfo = CASE WHEN excluded.mediainfo != '' THEN excluded.mediainfo ELSE releases.mediainfo END",
+        "user_status = COALESCE(NULLIF(releases.user_status, ''), excluded.user_status, 'new')",
         "updated_at = excluded.updated_at"
     ]
     update_clause = ", ".join(conflict_clauses)
@@ -150,13 +188,13 @@ def clear_cache():
     conn.commit()
     conn.close()
 
-def query_releases(category="movies", days=7, min_rating=0.0, max_size=15.0,
+def query_releases(category="movies", min_rating=0.0, max_size=15.0,
                    qualities=None, genre=None, year="2026", search=None,
-                   page=1, limit=15, deduplicate=True):
+                   page=1, limit=15, deduplicate=True, days=0):
     conn = get_connection()
     c = conn.cursor()
 
-    conditions = ["category = ?"]
+    conditions = ["category = ?", "(user_status IS NULL OR user_status = 'new')"]
     params = [category]
 
     # Year filter
@@ -168,12 +206,6 @@ def query_releases(category="movies", days=7, min_rating=0.0, max_size=15.0,
                 params.append(y_val)
         except ValueError:
             pass
-
-    # Date filter
-    if days and days > 0:
-        cutoff = int(time.time()) - (days * 86400)
-        conditions.append("date_ts >= ?")
-        params.append(cutoff)
 
     # Size filter
     if max_size and max_size > 0:
@@ -253,6 +285,148 @@ def query_releases(category="movies", days=7, min_rating=0.0, max_size=15.0,
         "limit": limit,
         "pages": (total_count + limit - 1) // limit if total_count > 0 else 1
     }
+
+def add_to_watchlist(torrent_id):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE releases SET user_status = 'watchlist', updated_at = ? WHERE torrent_id = ?",
+              (int(time.time()), str(torrent_id)))
+    conn.commit()
+    conn.close()
+
+def remove_from_watchlist(torrent_id):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE releases SET user_status = 'new', updated_at = ? WHERE torrent_id = ?",
+              (int(time.time()), str(torrent_id)))
+    conn.commit()
+    conn.close()
+
+def query_watchlist(search=None, page=1, limit=15):
+    conn = get_connection()
+    c = conn.cursor()
+    conditions = ["user_status = 'watchlist'"]
+    params = []
+    if search and search.strip():
+        s = f"%{search.strip()}%"
+        conditions.append("(title_ru LIKE ? OR title_en LIKE ? OR title LIKE ?)")
+        params.extend([s, s, s])
+    where_clause = " WHERE " + " AND ".join(conditions)
+
+    c.execute(f"SELECT COUNT(*) FROM releases {where_clause}", params)
+    total = c.fetchone()[0]
+
+    offset = (page - 1) * limit
+    c.execute(f"SELECT * FROM releases {where_clause} ORDER BY updated_at DESC LIMIT ? OFFSET ?", params + [limit, offset])
+    items = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": (total + limit - 1) // limit if total > 0 else 1
+    }
+
+def add_to_ignored(torrent_id):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM releases WHERE torrent_id = ?", (str(torrent_id),))
+    row = c.fetchone()
+    if row:
+        c.execute("""
+            INSERT OR REPLACE INTO ignored_releases 
+            (torrent_id, category, title, title_ru, title_en, year, genre, kp_rating, imdb_rating, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            str(torrent_id), row['category'], row['title'], row['title_ru'],
+            row['title_en'], row['year'], row['genre'], row['kp_rating'],
+            row['imdb_rating'], int(time.time())
+        ))
+        # Remove heavy record from releases to clear cache
+        c.execute("DELETE FROM releases WHERE torrent_id = ?", (str(torrent_id),))
+        conn.commit()
+    conn.close()
+
+def restore_from_ignored(torrent_id):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM ignored_releases WHERE torrent_id = ?", (str(torrent_id),))
+    conn.commit()
+    conn.close()
+
+def query_ignored(search=None, page=1, limit=15):
+    conn = get_connection()
+    c = conn.cursor()
+    conditions = ["1=1"]
+    params = []
+    if search and search.strip():
+        s = f"%{search.strip()}%"
+        conditions.append("(title_ru LIKE ? OR title_en LIKE ? OR title LIKE ?)")
+        params.extend([s, s, s])
+    where_clause = " WHERE " + " AND ".join(conditions)
+
+    c.execute(f"SELECT COUNT(*) FROM ignored_releases {where_clause}", params)
+    total = c.fetchone()[0]
+
+    offset = (page - 1) * limit
+    c.execute(f"SELECT * FROM ignored_releases {where_clause} ORDER BY created_at DESC LIMIT ? OFFSET ?", params + [limit, offset])
+    items = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": (total + limit - 1) // limit if total > 0 else 1
+    }
+
+def is_ignored(torrent_id, title_ru="", year=0):
+    conn = get_connection()
+    c = conn.cursor()
+    # Check by torrent_id
+    c.execute("SELECT 1 FROM ignored_releases WHERE torrent_id = ?", (str(torrent_id),))
+    if c.fetchone():
+        conn.close()
+        return True
+    # Check by title and year if provided
+    if title_ru and year and year > 0:
+        c.execute("SELECT 1 FROM ignored_releases WHERE LOWER(TRIM(title_ru)) = LOWER(TRIM(?)) AND year = ?",
+                  (title_ru, int(year)))
+        if c.fetchone():
+            conn.close()
+            return True
+    conn.close()
+    return False
+
+def get_curation_counts():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM releases WHERE user_status = 'watchlist'")
+    w_count = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM ignored_releases")
+    i_count = c.fetchone()[0]
+    conn.close()
+    return {"watchlist": w_count, "ignored": i_count}
+
+def get_crawl_page(category, year):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT next_page FROM crawl_progress WHERE category = ? AND year = ?", (category, int(year or 0)))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else 1
+
+def advance_crawl_page(category, year):
+    conn = get_connection()
+    c = conn.cursor()
+    cur = get_crawl_page(category, year)
+    nxt = cur + 1
+    c.execute("INSERT OR REPLACE INTO crawl_progress (category, year, next_page) VALUES (?, ?, ?)",
+              (category, int(year or 0), nxt))
+    conn.commit()
+    conn.close()
+    return nxt
 
 def get_release_by_id(item_id):
     conn = get_connection()

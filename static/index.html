@@ -27,7 +27,7 @@
         </div>
       </div>
 
-      <!-- 5 Categories Navigation -->
+      <!-- Navigation Tabs -->
       <nav class="category-tabs">
         <button class="cat-btn active" data-category="movies">
           <span class="cat-icon">🎬</span> Фильмы
@@ -43,6 +43,13 @@
         </button>
         <button class="cat-btn" data-category="software">
           <span class="cat-icon">💻</span> Программы
+        </button>
+        <div class="nav-divider"></div>
+        <button class="cat-btn cat-watchlist" data-category="watchlist" title="Отобранные фильмы к просмотру">
+          <span class="cat-icon">💚</span> Буду смотреть <span class="nav-count" id="count-watchlist">0</span>
+        </button>
+        <button class="cat-btn cat-ignored" data-category="ignored" title="Отклонённые фильмы">
+          <span class="cat-icon">🚫</span> Не буду смотреть <span class="nav-count" id="count-ignored">0</span>
         </button>
       </nav>
 
@@ -66,17 +73,6 @@
       <div class="filter-group search-group">
         <span class="filter-icon">🔍</span>
         <input type="text" id="search-input" placeholder="Поиск по названию, актёрам, играм..." />
-      </div>
-
-      <!-- Date Period Filter -->
-      <div class="filter-group date-group">
-        <label>Период:</label>
-        <div class="btn-toggle-group" id="date-buttons">
-          <button class="toggle-btn active" data-days="7">7 дней</button>
-          <button class="toggle-btn" data-days="14">14 дней</button>
-          <button class="toggle-btn" data-days="30">Месяц</button>
-          <button class="toggle-btn" data-days="0">Всё время</button>
-        </div>
       </div>
 
       <!-- Quality Filter -->
@@ -145,6 +141,22 @@
 
     <!-- Cards Grid (15 per page) -->
     <div class="cards-grid" id="cards-grid"></div>
+
+    <!-- Compact Table View for 'Не буду смотреть' -->
+    <div class="table-view-container" id="table-view-container" style="display: none;">
+      <table class="ignored-table">
+        <thead>
+          <tr>
+            <th>Название фильма</th>
+            <th>Год</th>
+            <th>Жанр</th>
+            <th>Рейтинги</th>
+            <th style="text-align: right;">Действие</th>
+          </tr>
+        </thead>
+        <tbody id="ignored-table-body"></tbody>
+      </table>
+    </div>
 
     <!-- Empty State -->
     <div class="empty-state" id="empty-state" style="display: none;">

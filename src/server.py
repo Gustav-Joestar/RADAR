@@ -50,6 +50,18 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             self.handle_api_items(params)
         elif path == "/api/item":
             self.handle_api_item(params)
+        elif path == "/api/watchlist":
+            search = params.get("search", [""])[0]
+            page = int(params.get("page", ["1"])[0])
+            limit = int(params.get("limit", ["15"])[0])
+            self.send_json(database.query_watchlist(search=search, page=page, limit=limit))
+        elif path == "/api/ignored":
+            search = params.get("search", [""])[0]
+            page = int(params.get("page", ["1"])[0])
+            limit = int(params.get("limit", ["15"])[0])
+            self.send_json(database.query_ignored(search=search, page=page, limit=limit))
+        elif path == "/api/counts":
+            self.send_json(database.get_curation_counts())
         elif path == "/api/logs":
             self.send_json({"logs": get_logs()})
         elif path == "/api/genres":
@@ -62,22 +74,64 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode("utf-8") if length > 0 else ""
+        data = {}
+        try:
+            data = json.loads(body) if body else {}
+        except Exception:
+            pass
+
         if path == "/api/refresh":
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8") if length > 0 else ""
-            category = "movies"
-            year = 2026
-            try:
-                data = json.loads(body) if body else {}
-                category = data.get("category", "movies")
-                y_val = data.get("year", "2026")
-                year = int(y_val) if str(y_val).isdigit() else 0
-            except Exception:
-                pass
-            
-            log(f"🔄 [СКАНЕР] Пользователь запустил сканирование: [{category}] (год: {year})", "INFO")
-            threading.Thread(target=tracker_engine.scan_category, args=(category, year, 2), daemon=True).start()
+            category = data.get("category", "movies")
+            y_val = data.get("year", "2026")
+            year = int(y_val) if str(y_val).isdigit() else 0
+            log(f"🔄 [СКАНЕР] Пользователь запустил полное сканирование: [{category}] (год: {year})", "INFO")
+            threading.Thread(target=tracker_engine.scan_category, args=(category, year, 1), daemon=True).start()
             self.send_json({"status": "started", "category": category, "year": year})
+        elif path == "/api/scan_more":
+            category = data.get("category", "movies")
+            y_val = data.get("year", "2026")
+            year = int(y_val) if str(y_val).isdigit() else 0
+            log(f"⚡ [АВТО-ПОДГРУЗКА] Сканирование следующей порции трекера [{category}] (год: {year})...", "INFO")
+            threading.Thread(target=tracker_engine.scan_next_tracker_page, args=(category, year), daemon=True).start()
+            self.send_json({"status": "scanning", "category": category, "year": year})
+        elif path == "/api/watchlist/add":
+            tid = data.get("torrent_id")
+            if tid:
+                database.add_to_watchlist(tid)
+                rel = database.get_release_by_id(tid)
+                t_name = rel.get("title_ru", tid) if rel else tid
+                log(f"💚 [БУДУ СМОТРЕТЬ] Добавлено: «{t_name}»", "SUCCESS")
+                self.send_json({"status": "ok", "torrent_id": tid})
+            else:
+                self.send_error(400, "Missing torrent_id")
+        elif path == "/api/watchlist/remove":
+            tid = data.get("torrent_id")
+            if tid:
+                database.remove_from_watchlist(tid)
+                log(f"↩️ [БУДУ СМОТРЕТЬ] Удалено из списка: #{tid}", "INFO")
+                self.send_json({"status": "ok", "torrent_id": tid})
+            else:
+                self.send_error(400, "Missing torrent_id")
+        elif path == "/api/ignored/add":
+            tid = data.get("torrent_id")
+            if tid:
+                rel = database.get_release_by_id(tid)
+                t_name = rel.get("title_ru", tid) if rel else tid
+                database.add_to_ignored(tid)
+                log(f"🚫 [НЕ БУДУ СМОТРЕТЬ] «{t_name}» скрыт (кэш очищен, сохранена краткая инфо)", "INFO")
+                self.send_json({"status": "ok", "torrent_id": tid})
+            else:
+                self.send_error(400, "Missing torrent_id")
+        elif path == "/api/ignored/restore":
+            tid = data.get("torrent_id")
+            if tid:
+                database.restore_from_ignored(tid)
+                log(f"↩️ [РАДАР] Фильм #{tid} возвращён из чёрного списка", "SUCCESS")
+                self.send_json({"status": "ok", "torrent_id": tid})
+            else:
+                self.send_error(400, "Missing torrent_id")
         elif path == "/api/clear-cache":
             database.clear_cache()
             log("🗑️ [КЭШ] Пользователь полностью очистил локальную базу данных и кэш", "WARNING")
@@ -87,7 +141,6 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
 
     def handle_api_items(self, params):
         category = params.get("category", ["movies"])[0]
-        days = int(params.get("days", ["7"])[0])
         min_rating = float(params.get("min_rating", ["0.0"])[0])
         max_size = float(params.get("max_size", ["15.0"])[0])
         genre = params.get("genre", ["all"])[0]
@@ -103,7 +156,7 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         log(f"📡 [РАДАР] Запрос витрины [{category}], {year} г., качество: {q_desc}, размер: <={max_size}GB, стр. {page}", "INFO")
 
         data = database.query_releases(
-            category=category, days=days, min_rating=min_rating,
+            category=category, min_rating=min_rating,
             max_size=max_size, qualities=qualities, genre=genre,
             year=year, search=search, page=page, limit=limit,
             deduplicate=True
@@ -111,13 +164,10 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
 
         log(f"✅ [РАДАР] Найдено {data['total']} релизов (выведено {len(data['items'])} на стр. {page})", "SUCCESS")
 
-        # If 0 results with current strict filter, check if category is empty for this year
-        if data["total"] == 0 and not search and genre == "all":
-            count_all = database.query_releases(category=category, days=0, max_size=0, min_rating=0, year=year)["total"]
-            if count_all == 0:
-                y_scan = int(year) if str(year).isdigit() else 2026
-                log(f"Категория [{category}] ({year}) пуста в базе. Запуск фонового сбора...", "INFO")
-                threading.Thread(target=tracker_engine.scan_category, args=(category, y_scan, 2), daemon=True).start()
+        # If items on this page are low or 0 and user isn't doing a specific text search, trigger crawl next page
+        if len(data["items"]) < limit and not search and genre == "all":
+            y_scan = int(year) if str(year).isdigit() else 2026
+            threading.Thread(target=tracker_engine.scan_next_tracker_page, args=(category, y_scan), daemon=True).start()
 
         # Auto-queue background details & poster fetch for any items on screen that lack posters
         missing_posters = [it.get("torrent_id") for it in data["items"] if not it.get("poster_url") and it.get("torrent_id")]

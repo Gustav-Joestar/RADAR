@@ -166,6 +166,40 @@ body {
   box-shadow: 0 2px 10px var(--accent-glow);
 }
 
+.cat-btn.cat-watchlist.active {
+  background: #10b981 !important;
+  color: #0b0f17 !important;
+  box-shadow: 0 2px 12px rgba(16, 185, 129, 0.45) !important;
+}
+
+.cat-btn.cat-ignored.active {
+  background: #ef4444 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 12px rgba(239, 68, 68, 0.45) !important;
+}
+
+.nav-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border-color);
+  margin: 0 4px;
+  align-self: center;
+}
+
+.nav-count {
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+.cat-btn.active .nav-count {
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+}
+
 .btn-clear-cache {
   background: rgba(239, 68, 68, 0.08);
   border: 1px solid rgba(239, 68, 68, 0.35);
@@ -481,6 +515,145 @@ select:focus {
 .badge-rating.imdb-badge {
   background: #f5c518;
   color: #000000;
+}
+
+/* Card Hover Quick Actions */
+.card-hover-actions {
+  position: absolute;
+  inset: 0;
+  background: rgba(11, 15, 23, 0.82);
+  backdrop-filter: blur(4px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+  z-index: 6;
+}
+
+.media-card:hover .card-hover-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.btn-card-action {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  border: none;
+}
+
+.btn-card-watch {
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid #10b981;
+  color: #34d399;
+}
+
+.btn-card-watch:hover {
+  background: #10b981;
+  color: #0b0f17;
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.5);
+  transform: translateY(-2px);
+}
+
+.btn-card-ignore {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid #ef4444;
+  color: #f87171;
+}
+
+.btn-card-ignore:hover {
+  background: #ef4444;
+  color: #ffffff;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.5);
+  transform: translateY(-2px);
+}
+
+.media-card.card-removing {
+  opacity: 0;
+  transform: scale(0.88) translateY(12px);
+  transition: all 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
+/* Compact Table View for Ignored List */
+.table-view-container {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  overflow-x: auto;
+  margin-bottom: 24px;
+}
+
+.ignored-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  text-align: left;
+}
+
+.ignored-table th {
+  background: rgba(255, 255, 255, 0.03);
+  padding: 14px 20px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.ignored-table td {
+  padding: 14px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+  vertical-align: middle;
+}
+
+.ignored-table tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.table-title-main {
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.table-title-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.btn-restore {
+  background: rgba(0, 255, 204, 0.1);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-restore:hover {
+  background: var(--accent);
+  color: #0b0f17;
+  box-shadow: 0 0 10px var(--accent-glow);
 }
 
 .card-content {
