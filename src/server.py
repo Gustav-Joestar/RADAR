@@ -44,12 +44,12 @@ def schedule_shutdown(delay=3.5):
     SHUTDOWN_TIMER.start()
 
 def watchdog_monitor():
-    # Initial grace period: wait 35s to allow user time to open browser
-    time.sleep(35)
+    # Grace period: wait 60s to allow user time to open browser
+    time.sleep(60)
     while True:
-        time.sleep(2)
-        if HEARTBEAT_ACTIVE and (time.time() - LAST_HEARTBEAT > 10):
-            log("🛑 [СЕРВЕР] Потеряна связь с окном браузера (>10 сек). Остановка сервера RADAR...", "INFO")
+        time.sleep(3)
+        if HEARTBEAT_ACTIVE and (time.time() - LAST_HEARTBEAT > 120):
+            log("🛑 [СЕРВЕР] Потеряна связь с окном браузера (>120 сек). Остановка сервера RADAR...", "INFO")
             time.sleep(0.3)
             os._exit(0)
 
@@ -246,34 +246,38 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             deduplicate=True, origin=origin
         )
 
-        # Auto-backfill to fill page up to limit (15 items) if filtered results are sparse
-        if len(data["items"]) < limit and not search and category in ("movies", "series"):
+        # Initial crawl only if category has 0 items in database
+        if data["total"] == 0 and not search and page == 1:
             y_scan = int(year) if str(year).isdigit() else 0
-            log(f"🔄 [АВТО-ДОПОДГРУЗКА] Найдено {len(data['items'])}/{limit} релизов. Сканирование трекера для пополнения страницы...", "INFO")
-            for _ in range(2):
-                crawled = tracker_engine.scan_next_tracker_page(category, y_scan)
-                if not crawled:
-                    break
+            log(f"📡 [РАДАР] Каталог [{category}] пуст. Запуск первичного сканирования...", "INFO")
+            tracker_engine.scan_category(category, y_scan, 1)
+            data = database.query_releases(
+                category=category, min_rating=min_rating,
+                max_size=max_size, qualities=qualities, genre=genre,
+                year=year, search=search, page=page, limit=limit,
+                deduplicate=True, origin=origin
+            )
+
+        # Ensure page 1 has all posters loaded immediately so user sees complete cards
+        if page == 1 and not search:
+            missing_ids = [it["torrent_id"] for it in data["items"] if not it.get("poster_url")]
+            if missing_ids:
+                from concurrent.futures import ThreadPoolExecutor
+                log(f"⚡ [ПОСТЕРЫ] Мгновенная дозагрузка {len(missing_ids)} обложек для витрины...", "INFO")
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    list(executor.map(tracker_engine.parse_full_details, missing_ids))
                 data = database.query_releases(
                     category=category, min_rating=min_rating,
                     max_size=max_size, qualities=qualities, genre=genre,
                     year=year, search=search, page=page, limit=limit,
                     deduplicate=True, origin=origin
                 )
-                if len(data["items"]) >= limit:
-                    break
-
-            if len(data["items"]) < limit:
-                threading.Thread(target=tracker_engine.scan_next_tracker_page, args=(category, y_scan), daemon=True).start()
+        elif page > 1:
+            missing_ids = [it["torrent_id"] for it in data["items"] if not it.get("poster_url")]
+            if missing_ids:
+                threading.Thread(target=lambda ids: [tracker_engine.parse_full_details(tid) for tid in ids], args=(missing_ids,), daemon=True).start()
 
         log(f"✅ [РАДАР] Итого: {data['total']} релизов (выведено {len(data['items'])} на стр. {page})", "SUCCESS")
-
-        # Auto-queue background details & poster fetch for any items on screen that lack posters
-        missing_posters = [it.get("torrent_id") for it in data["items"] if not it.get("poster_url") and it.get("torrent_id")]
-        if missing_posters:
-            log(f"🖼️ [ПОСТЕРЫ] Запуск фоновой загрузки обложек для {len(missing_posters)} фильмов...", "INFO")
-            threading.Thread(target=lambda ids: [tracker_engine.parse_full_details(tid) for tid in ids], args=(missing_posters,), daemon=True).start()
-
         self.send_json(data)
 
     def handle_api_years(self, params):
@@ -287,24 +291,28 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         self.send_json({"genres": genres})
 
     def handle_api_item(self, params):
-        item_id = params.get("id", [""])[0]
-        if not item_id:
-            self.send_error(400, "Missing id parameter")
-            return
+        try:
+            item_id = params.get("id", [""])[0]
+            if not item_id:
+                self.send_error(400, "Missing id parameter")
+                return
 
-        item = database.get_release_by_id(item_id)
-        if not item:
-            self.send_error(404, "Item not found")
-            return
+            item = database.get_release_by_id(item_id)
+            if not item:
+                self.send_error(404, "Item not found")
+                return
 
-        log(f"🎬 [ОТКРЫТИЕ КАРТОЧКИ] #{item_id} «{item.get('title_ru')}» | {item.get('quality')} | КП: {item.get('kp_rating') or '—'} | IMDb: {item.get('imdb_rating') or '—'}", "INFO")
+            log(f"🎬 [ОТКРЫТИЕ КАРТОЧКИ] #{item_id} «{item.get('title_ru')}» | {item.get('quality')} | КП: {item.get('kp_rating') or '—'} | IMDb: {item.get('imdb_rating') or '—'}", "INFO")
 
-        if not item.get("description") and not item.get("audio_info"):
-            details = tracker_engine.parse_full_details(item.get("torrent_id"))
-            if details:
-                item = details
+            if not item.get("description") and not item.get("audio_info"):
+                details = tracker_engine.parse_full_details(item.get("torrent_id"))
+                if details:
+                    item = details
 
-        self.send_json(item)
+            self.send_json(item)
+        except Exception as e:
+            log(f"⚠️ Ошибка открытия карточки #{params.get('id', [''])[0]}: {e}", "ERROR")
+            self.send_json({"error": str(e)})
 
     def handle_api_poster_search(self, params):
         title = params.get("title", [""])[0]
@@ -374,12 +382,11 @@ def run_server(port=PORT):
     # Watchdog monitor: stops server when browser closes
     threading.Thread(target=watchdog_monitor, daemon=True).start()
 
-    # Auto-scan initial categories if database is fresh
-    for cat in ["movies", "series", "anime", "games", "software"]:
-        count = database.query_releases(category=cat, days=0, max_size=0, min_rating=0, year="all")["total"]
-        if count == 0:
-            y_scan = 2026 if cat in ("movies", "series", "anime") else 0
-            threading.Thread(target=tracker_engine.scan_category, args=(cat, y_scan, 2), daemon=True).start()
+    # Auto-scan initial 'movies' category only if database is fresh (1 page, first 15 with covers immediately)
+    count = database.query_releases(category="movies", days=0, max_size=0, min_rating=0, year="all")["total"]
+    if count == 0:
+        log("🚀 [СТАРТ] Первичная загрузка 15 фильмов с обложками...", "INFO")
+        threading.Thread(target=tracker_engine.scan_category, args=("movies", 2026, 1), daemon=True).start()
 
     try:
         server.serve_forever()

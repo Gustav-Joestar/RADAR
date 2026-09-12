@@ -39,12 +39,13 @@ def is_bad_poster(url):
     if not u.startswith(('http://', 'https://')):
         return True
     if any(bad in u for bad in [
-        'radikal', 'rating', 's.rutor.info/imdb', 'imdb/pic', '.gif',
-        'thumb', 'preview', 'arrowup', 'arrowdown', 'smilies',
-        'share', 'button', 'banner', 'logo', 'icon', 'ecx.images-amazon.com'
+        'radikal', 'rating', 's.rutor.info', 'imdb/pic', '.gif',
+        'thumb', 'preview', '/t/', 'arrowup', 'arrowdown', 'smilies',
+        'share', 'button', 'banner', 'logo', 'icon', 'ecx.images-amazon.com',
+        'cdnbunny.org', 'kinopoisk.ru/rating'
     ]):
         return True
-    if '/thumb/' in u or '/preview/' in u or '/t/' in u:
+    if '/thumb/' in u or '/preview/' in u:
         return True
     return False
 
@@ -501,12 +502,31 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
             log(f"⚠️ Ошибка парсинга {url}: {e}", "ERROR")
 
     cached_count = len(scanned_torrent_ids) - len(unique_titles_to_fetch)
-    log(f"Категория [{category_name}]: {len(scanned_torrent_ids)} раздач обработано ({cached_count} из кэша, {len(unique_titles_to_fetch)} новых).", "INFO")
+    log(f"Категория [{category_name}]: {len(scanned_torrent_ids)} раздач найдено ({cached_count} из кэша, {len(unique_titles_to_fetch)} новых).", "INFO")
     
-    if unique_titles_to_fetch:
-        log(f"Загрузка обложек и полных данных для {len(unique_titles_to_fetch)} новых тайтлов...", "INFO")
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            list(executor.map(parse_full_details, unique_titles_to_fetch))
+    # Priority 1: Immediately fetch details and local posters for the top 15 releases of page 1
+    page_1_data = database.query_releases(category=category_name, page=1, limit=15)
+    page_1_needed = [it["torrent_id"] for it in page_1_data.get("items", []) if not it.get("poster_url") or not it.get("description")]
+    
+    if page_1_needed:
+        log(f"⚡ [ПОСТЕРЫ] Мгновенная загрузка данных и обложек для первых {len(page_1_needed)} релизов витрины...", "INFO")
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            list(executor.map(parse_full_details, page_1_needed))
+        log(f"✅ [ПОСТЕРЫ] Витрина первой страницы полностью готова ({len(page_1_needed)} обложек)!", "SUCCESS")
+
+    # Priority 2: Process remaining background releases lazily in background
+    remaining_to_fetch = [tid for tid in unique_titles_to_fetch if tid not in page_1_needed]
+    if remaining_to_fetch:
+        import threading
+        def _fetch_remaining_lazily(items):
+            time.sleep(1.0)
+            for tid in items:
+                try:
+                    parse_full_details(tid)
+                    time.sleep(0.3)
+                except Exception:
+                    pass
+        threading.Thread(target=_fetch_remaining_lazily, args=(remaining_to_fetch,), daemon=True).start()
 
     log(f"Категория [{category_name}] полностью актуализирована!", "SUCCESS")
     return len(scanned_torrent_ids)
@@ -528,23 +548,40 @@ def parse_full_details(torrent_id):
         magnet_url = magnet_a['href'] if magnet_a else ""
 
         poster_url = ""
-        # Choose poster from torrent detail page, filtering out icons/badges/thumbnails
-        poster_candidates = []
+        # Choose poster from torrent detail page:
+        # On Rutor, the official cover is always placed on the right (float:right or align="right")
         for img in details_table.select('img'):
             src = img.get('src', '')
             if not src:
                 continue
             if src.startswith('//'):
                 src = 'https:' + src
-            poster_candidates.append(src)
+            if is_bad_poster(src):
+                continue
 
-        good_candidates = [s for s in poster_candidates if not is_bad_poster(s)]
-        if good_candidates:
-            poster_url = good_candidates[0]
-            log(f"🖼️ [ПОСТЕР] #{torrent_id} выбран постер: {poster_url[:80]}... (из {len(poster_candidates)} картинок, {len(good_candidates)} подходящих)", "DEBUG")
-        elif poster_candidates:
-            poster_url = poster_candidates[0]
-            log(f"⚠️ [ПОСТЕР] #{torrent_id} все {len(poster_candidates)} картинок некачественные, взята первая: {poster_url[:80]}...", "DEBUG")
+            style = (img.get('style') or '').lower().replace(' ', '')
+            align = (img.get('align') or '').lower().strip()
+            p_style = (img.parent.get('style') or '').lower().replace(' ', '') if img.parent else ''
+            p_align = (img.parent.get('align') or '').lower().strip() if img.parent else ''
+
+            if 'float:right' in style or align == 'right' or 'float:right' in p_style or p_align == 'right':
+                poster_url = src
+                log(f"🖼️ [ПОСТЕР] #{torrent_id} найдена обложка справа (float:right): {poster_url[:80]}...", "DEBUG")
+                break
+
+        # Priority 2: first clean image in details_table
+        if not poster_url:
+            for img in details_table.select('img'):
+                src = img.get('src', '')
+                if not src:
+                    continue
+                if src.startswith('//'):
+                    src = 'https:' + src
+                if is_bad_poster(src):
+                    continue
+                poster_url = src
+                log(f"🖼️ [ПОСТЕР] #{torrent_id} взята первая подходящая картинка: {poster_url[:80]}...", "DEBUG")
+                break
 
         full_text = details_table.text
 
@@ -654,8 +691,6 @@ def parse_full_details(torrent_id):
         kp_m = re.search(r'kinopoisk\.ru/film/(\d+)', html)
         if kp_m:
             kp_id = kp_m.group(1)
-            if not poster_url or is_bad_poster(poster_url):
-                poster_url = f"https://st.kp.yandex.net/images/film_iphone/iphone360_{kp_id}.jpg"
             try:
                 r_kp = requests.get(f'https://rating.kinopoisk.ru/{kp_id}.xml', timeout=4)
                 if r_kp.status_code == 200:

@@ -17,6 +17,11 @@
   --font-mono: 'JetBrains Mono', monospace;
 }
 
+html {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -455,6 +460,7 @@ select:focus {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 22px;
+  min-height: 800px;
 }
 
 /* Card */

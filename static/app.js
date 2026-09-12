@@ -637,37 +637,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  const repairingPosters = new Set();
   window.repairPoster = function(imgElem, torrentId, titleRu, year, titleEn) {
     const nextElem = imgElem ? imgElem.nextElementSibling : null;
     if (nextElem) nextElem.style.display = 'flex';
     if (imgElem) imgElem.style.display = 'none';
-
-    if (!titleRu || repairingPosters.has(torrentId)) return;
-    repairingPosters.add(torrentId);
-
-    const p = new URLSearchParams({
-      title: titleRu,
-      year: year || 0,
-      original_title: titleEn || '',
-      torrent_id: torrentId || ''
-    });
-
-    fetch(`/api/poster_search?${p.toString()}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.poster_url) {
-          if (imgElem) {
-            imgElem.src = data.poster_url;
-            imgElem.style.display = 'block';
-            if (nextElem) nextElem.style.display = 'none';
-          }
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        setTimeout(() => repairingPosters.delete(torrentId), 3000);
-      });
   };
 
   // --- Poster Loading System ---
@@ -1052,6 +1025,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   sendHeartbeat();
   setInterval(sendHeartbeat, 2500);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) sendHeartbeat();
+  });
 
   // Notify server when window is closing so process can exit cleanly
   window.addEventListener('beforeunload', () => {
