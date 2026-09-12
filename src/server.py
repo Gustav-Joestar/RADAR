@@ -78,6 +78,10 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             log(f"🔄 [СКАНЕР] Пользователь запустил сканирование: [{category}] (год: {year})", "INFO")
             threading.Thread(target=tracker_engine.scan_category, args=(category, year, 2), daemon=True).start()
             self.send_json({"status": "started", "category": category, "year": year})
+        elif path == "/api/clear-cache":
+            database.clear_cache()
+            log("🗑️ [КЭШ] Пользователь полностью очистил локальную базу данных и кэш", "WARNING")
+            self.send_json({"status": "cleared", "message": "Cache successfully cleared"})
         else:
             self.send_error(404, "Not Found")
 

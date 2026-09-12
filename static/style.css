@@ -166,10 +166,32 @@ body {
   box-shadow: 0 2px 10px var(--accent-glow);
 }
 
+.btn-clear-cache {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #f87171;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.btn-clear-cache:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.25);
+}
+
 .btn-refresh {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  color: var(--text-main);
+  background: rgba(0, 255, 204, 0.08);
+  border: 1px solid rgba(0, 255, 204, 0.35);
+  color: var(--accent);
   padding: 8px 16px;
   border-radius: 10px;
   font-size: 13px;
@@ -179,11 +201,14 @@ body {
   align-items: center;
   gap: 6px;
   transition: all 0.2s;
+  white-space: nowrap;
 }
 
 .btn-refresh:hover {
+  background: rgba(0, 255, 204, 0.16);
   border-color: var(--accent);
-  color: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(0, 255, 204, 0.2);
 }
 
 .btn-refresh.loading .refresh-icon {

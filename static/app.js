@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const genreSelect = document.getElementById('genre-select');
   const genreWrap = document.getElementById('genre-filter-wrap');
   const btnReset = document.getElementById('btn-reset-filters');
+  const btnClearCache = document.getElementById('btn-clear-cache');
   const modalOverlay = document.getElementById('detail-modal');
   const modalContent = document.getElementById('modal-content');
   const modalClose = document.getElementById('modal-close');
@@ -153,6 +154,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Reset Filters
     btnReset.addEventListener('click', resetFilters);
+
+    // Clear Cache Action
+    if (btnClearCache) {
+      btnClearCache.addEventListener('click', () => {
+        if (confirm("Вы уверены, что хотите полностью очистить сохранённый локальный кэш фильмов? База данных будет очищена.")) {
+          consoleStatusText.textContent = "Очистка кэша...";
+          fetch('/api/clear-cache', { method: 'POST' })
+            .then(res => res.json())
+            .then(() => {
+              state.page = 1;
+              fetchReleases();
+              loadYears();
+              loadGenres();
+            })
+            .catch(err => alert("Ошибка при очистке кэша: " + err.message));
+        }
+      });
+    }
 
     // Refresh Tracker Data
     btnRefresh.addEventListener('click', () => {

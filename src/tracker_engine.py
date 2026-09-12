@@ -174,6 +174,14 @@ def scan_category(category_name, year=2026, max_pages=2):
                 if seeds == 0 and peers == 0 and size_gb == 0:
                     continue
 
+                # Check if release is already in persistent cache with full details
+                cached = database.get_release_by_id(torrent_id)
+                if cached and (cached.get("description") or cached.get("poster_url") or cached.get("kp_rating") or cached.get("imdb_rating")):
+                    # ALREADY IN CACHE: update only live seed/peer/size stats
+                    database.update_tracker_stats(torrent_id, seeds, peers, size_gb, size_str, date_str, date_ts)
+                    scanned_torrent_ids.append(torrent_id)
+                    continue
+
                 title_ru = raw_title
                 title_en = ""
                 rel_year = year if (year and year > 0) else 0
@@ -238,14 +246,15 @@ def scan_category(category_name, year=2026, max_pages=2):
         except Exception as e:
             log(f"⚠️ Ошибка парсинга {url}: {e}", "ERROR")
 
-    log(f"Категория [{category_name}]: обнаружено {len(scanned_torrent_ids)} раздач ({len(unique_titles_to_fetch)} уникальных тайтлов).", "INFO")
-    log(f"Загрузка обложек и полных данных (16 полей)...", "INFO")
+    cached_count = len(scanned_torrent_ids) - len(unique_titles_to_fetch)
+    log(f"Категория [{category_name}]: {len(scanned_torrent_ids)} раздач обработано ({cached_count} из кэша, {len(unique_titles_to_fetch)} новых).", "INFO")
     
-    # Preload details for ALL unique titles concurrently
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        list(executor.map(parse_full_details, unique_titles_to_fetch))
+    if unique_titles_to_fetch:
+        log(f"Загрузка обложек и полных данных для {len(unique_titles_to_fetch)} новых тайтлов...", "INFO")
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            list(executor.map(parse_full_details, unique_titles_to_fetch))
 
-    log(f"Категория [{category_name}] полностью обновлена (с обложками и деталями)!", "SUCCESS")
+    log(f"Категория [{category_name}] полностью актуализирована!", "SUCCESS")
 
 def parse_full_details(torrent_id):
     url = f"http://rutor.info/torrent/{torrent_id}"

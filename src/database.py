@@ -82,7 +82,43 @@ def upsert_release(data):
     data["updated_at"] = now
     placeholders = ", ".join(["?"] * len(fields))
     columns = ", ".join(fields)
-    update_clause = ", ".join([f"{f}=excluded.{f}" for f in fields if f != "torrent_id"])
+    
+    # Smart update clause: NEVER overwrite cached posters, ratings, or descriptions with empty/zero defaults
+    conflict_clauses = [
+        "category = excluded.category",
+        "title = excluded.title",
+        "title_ru = CASE WHEN excluded.title_ru != '' THEN excluded.title_ru ELSE releases.title_ru END",
+        "title_en = CASE WHEN excluded.title_en != '' THEN excluded.title_en ELSE releases.title_en END",
+        "year = CASE WHEN excluded.year > 0 THEN excluded.year ELSE releases.year END",
+        "date_added = excluded.date_added",
+        "date_ts = excluded.date_ts",
+        "size_gb = CASE WHEN excluded.size_gb > 0 THEN excluded.size_gb ELSE releases.size_gb END",
+        "size_str = CASE WHEN excluded.size_str != '' THEN excluded.size_str ELSE releases.size_str END",
+        "seeds = excluded.seeds",
+        "peers = excluded.peers",
+        "quality = CASE WHEN excluded.quality != '' AND excluded.quality != '1080p' THEN excluded.quality ELSE COALESCE(NULLIF(releases.quality, ''), excluded.quality) END",
+        "video_info = CASE WHEN excluded.video_info != '' THEN excluded.video_info ELSE releases.video_info END",
+        "audio_info = CASE WHEN excluded.audio_info != '' THEN excluded.audio_info ELSE releases.audio_info END",
+        "audio_tracks = CASE WHEN excluded.audio_tracks != '' AND excluded.audio_tracks != '[]' THEN excluded.audio_tracks ELSE releases.audio_tracks END",
+        "voiceover = CASE WHEN excluded.voiceover != '' THEN excluded.voiceover ELSE releases.voiceover END",
+        "subtitles = CASE WHEN excluded.subtitles != '' AND excluded.subtitles != '[]' THEN excluded.subtitles ELSE releases.subtitles END",
+        "genre = CASE WHEN excluded.genre != '' THEN excluded.genre ELSE releases.genre END",
+        "director = CASE WHEN excluded.director != '' THEN excluded.director ELSE releases.director END",
+        "actors = CASE WHEN excluded.actors != '' THEN excluded.actors ELSE releases.actors END",
+        "description = CASE WHEN excluded.description != '' THEN excluded.description ELSE releases.description END",
+        "country = CASE WHEN excluded.country != '' THEN excluded.country ELSE releases.country END",
+        "duration = CASE WHEN excluded.duration != '' THEN excluded.duration ELSE releases.duration END",
+        "imdb_rating = CASE WHEN excluded.imdb_rating > 0 THEN excluded.imdb_rating ELSE releases.imdb_rating END",
+        "kp_rating = CASE WHEN excluded.kp_rating > 0 THEN excluded.kp_rating ELSE releases.kp_rating END",
+        "poster_url = CASE WHEN excluded.poster_url != '' THEN excluded.poster_url ELSE releases.poster_url END",
+        "torrent_url = excluded.torrent_url",
+        "magnet_url = CASE WHEN excluded.magnet_url != '' THEN excluded.magnet_url ELSE releases.magnet_url END",
+        "source_url = excluded.source_url",
+        "seasons_info = CASE WHEN excluded.seasons_info != '' AND excluded.seasons_info != '[]' THEN excluded.seasons_info ELSE releases.seasons_info END",
+        "mediainfo = CASE WHEN excluded.mediainfo != '' THEN excluded.mediainfo ELSE releases.mediainfo END",
+        "updated_at = excluded.updated_at"
+    ]
+    update_clause = ", ".join(conflict_clauses)
 
     sql = f"""
     INSERT INTO releases ({columns})
@@ -91,6 +127,26 @@ def upsert_release(data):
     """
     values = [data.get(f) for f in fields]
     c.execute(sql, values)
+    conn.commit()
+    conn.close()
+
+def update_tracker_stats(torrent_id, seeds, peers, size_gb, size_str, date_str, date_ts):
+    conn = get_connection()
+    c = conn.cursor()
+    now = int(time.time())
+    c.execute("""
+        UPDATE releases
+        SET seeds = ?, peers = ?, size_gb = ?, size_str = ?, date_added = ?, date_ts = ?, updated_at = ?
+        WHERE torrent_id = ?
+    """, (seeds, peers, size_gb, size_str, date_str, date_ts, now, str(torrent_id)))
+    conn.commit()
+    conn.close()
+
+def clear_cache():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM releases")
+    c.execute("VACUUM")
     conn.commit()
     conn.close()
 
