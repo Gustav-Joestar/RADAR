@@ -361,9 +361,13 @@ document.addEventListener('DOMContentLoaded', () => {
         ? `<img class="poster-img" src="${item.poster_url}" alt="${item.title_ru}" loading="lazy" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'poster-placeholder\'>🎬</div>'"/>`
         : `<div class="poster-placeholder" style="animation: pulse 1.5s infinite;">⏳ Подгрузка обложки...</div>`;
 
-      const ratingBadge = (item.imdb_rating > 0 || item.kp_rating > 0)
-        ? `<div class="badge-rating">⭐ ${item.kp_rating || item.imdb_rating}</div>`
-        : '';
+      let ratingBadges = '';
+      if (item.kp_rating > 0) {
+        ratingBadges += `<div class="badge-rating kp-badge" title="Кинопоиск">КП ${item.kp_rating}</div>`;
+      }
+      if (item.imdb_rating > 0) {
+        ratingBadges += `<div class="badge-rating imdb-badge" title="IMDb">IMDb ${item.imdb_rating}</div>`;
+      }
 
       const qualityBadge = item.quality 
         ? `<div class="badge-quality">${item.quality}</div>`
@@ -373,7 +377,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="poster-wrap">
           ${posterHtml}
           ${qualityBadge}
-          ${ratingBadge}
+          <div class="card-ratings-wrap">${ratingBadges}</div>
         </div>
         <div class="card-content">
           <h3 class="card-title" title="${item.title}">${item.title_ru}</h3>

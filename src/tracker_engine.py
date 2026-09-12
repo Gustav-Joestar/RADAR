@@ -70,18 +70,36 @@ def parse_size_gb(size_str):
         pass
     return 0.0
 
-def extract_quality(title):
-    t_up = title.upper()
-    if '2160P' in t_up or '4K' in t_up:
+def extract_quality(title, video_info=""):
+    v_str = (video_info or '') + ' ' + (title or '')
+    
+    # 1. Exact resolution match (e.g. 1920x804, 3840x2160, 1280x720)
+    m_res = re.search(r'(\d{3,4})\s*[xх*]\s*(\d{3,4})', v_str, re.IGNORECASE)
+    if m_res:
+        dim1, dim2 = int(m_res.group(1)), int(m_res.group(2))
+        width = max(dim1, dim2)
+        height = min(dim1, dim2)
+        if width >= 3800 or height >= 2000:
+            return '4K'
+        if width >= 1900 or height >= 800:
+            return '1080p'
+        if width >= 1200 or height >= 500:
+            return '720p'
+        if width >= 600 or height >= 300:
+            return 'SD'
+
+    # 2. Strict word boundary check (explicitly ignore elektri4ka so 4k is not falsely triggered)
+    t_clean = re.sub(r'elektri4ka|exkinoray|baibako|coldfilm', '', title, flags=re.IGNORECASE)
+    if re.search(r'\b(?:2160p|4k|uhd)\b', t_clean, re.IGNORECASE):
         return '4K'
-    if '1080P' in t_up or '1080I' in t_up:
+    if re.search(r'\b(?:1080p|1080i)\b', t_clean, re.IGNORECASE):
         return '1080p'
-    if '720P' in t_up:
+    if re.search(r'\b(?:720p)\b', t_clean, re.IGNORECASE):
         return '720p'
-    if 'BDRIP' in t_up:
-        return 'BDRip 1080p' if '1080' in t_up else 'BDRip'
-    if 'WEB-DL' in t_up:
-        return 'WEB-DL 1080p' if '1080' in t_up else 'WEB-DL'
+    if 'bdrip' in t_clean.lower():
+        return '1080p' if '1080' in t_clean else 'BDRip'
+    if 'web-dl' in t_clean.lower() or 'web-dlrip' in t_clean.lower():
+        return '1080p'
     return '1080p'
 
 def detect_genre_from_title(title):
@@ -295,11 +313,34 @@ def parse_full_details(torrent_id):
                 if p and p.lower() != 'нет':
                     subtitles_list.append(p)
 
-        # Ratings
-        imdb_m = re.search(r'IMDb[:\s*]+(\d+(?:\.\d+)?)\s*(?:/\s*10)?', full_text, re.IGNORECASE)
-        kp_m = re.search(r'(?:Кинопоиск|Kinopoisk|КП)[:\s*]+(\d+(?:\.\d+)?)\s*(?:/\s*10)?', full_text, re.IGNORECASE)
-        imdb_rating = float(imdb_m.group(1)) if imdb_m else 0.0
-        kp_rating = float(kp_m.group(1)) if kp_m else 0.0
+        # 1. Fetch ratings from Kinopoisk and IMDb
+        kp_rating = 0.0
+        imdb_rating = 0.0
+
+        kp_m = re.search(r'kinopoisk\.ru/film/(\d+)', html)
+        if kp_m:
+            kp_id = kp_m.group(1)
+            try:
+                r_kp = requests.get(f'https://rating.kinopoisk.ru/{kp_id}.xml', timeout=4)
+                if r_kp.status_code == 200:
+                    km = re.search(r'<kp_rating[^>]*>([\d\.]+)</kp_rating>', r_kp.text)
+                    im = re.search(r'<imdb_rating[^>]*>([\d\.]+)</imdb_rating>', r_kp.text)
+                    if km and float(km.group(1)) > 0:
+                        kp_rating = round(float(km.group(1)), 1)
+                    if im and float(im.group(1)) > 0:
+                        imdb_rating = round(float(im.group(1)), 1)
+            except Exception:
+                pass
+
+        # Text fallback if ratings are still 0
+        if imdb_rating == 0.0:
+            imdb_m = re.search(r'IMDb[:\s*]+(\d+(?:\.\d+)?)\s*(?:/\s*10)?', full_text, re.IGNORECASE)
+            if imdb_m:
+                imdb_rating = round(float(imdb_m.group(1)), 1)
+        if kp_rating == 0.0:
+            kp_txt_m = re.search(r'(?:Кинопоиск|Kinopoisk|КП)[:\s*]+(\d+(?:\.\d+)?)\s*(?:/\s*10)?', full_text, re.IGNORECASE)
+            if kp_txt_m:
+                kp_rating = round(float(kp_txt_m.group(1)), 1)
 
         # Season links for series
         seasons_info = []
@@ -321,7 +362,11 @@ def parse_full_details(torrent_id):
         existing = database.get_release_by_id(torrent_id)
         if existing:
             update_data = dict(existing)
+            # Re-evaluate quality accurately using video_info resolution
+            accurate_quality = extract_quality(update_data.get("title", ""), video_info)
+
             update_data.update({
+                "quality": accurate_quality,
                 "poster_url": poster_url or update_data.get("poster_url", ""),
                 "magnet_url": magnet_url or update_data.get("magnet_url", ""),
                 "genre": genre or update_data.get("genre", ""),
@@ -341,8 +386,11 @@ def parse_full_details(torrent_id):
                 "mediainfo": mediainfo
             })
             database.upsert_release(update_data)
+            r_str = f"КП {kp_rating or '—'} / IMDb {imdb_rating or '—'}"
+            log(f"🎬 [ДЕТАЛИ] #{torrent_id} «{update_data.get('title_ru')[:35]}» | {accurate_quality} | {r_str} | Обложка: {'✅' if update_data.get('poster_url') else '❌'}", "SUCCESS")
             return update_data
 
         return None
-    except Exception:
+    except Exception as e:
+        log(f"⚠️ Ошибка парсинга #{torrent_id}: {e}", "WARNING")
         return None

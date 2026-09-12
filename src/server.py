@@ -75,6 +75,7 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             
+            log(f"🔄 [СКАНЕР] Пользователь запустил сканирование: [{category}] (год: {year})", "INFO")
             threading.Thread(target=tracker_engine.scan_category, args=(category, year, 2), daemon=True).start()
             self.send_json({"status": "started", "category": category, "year": year})
         else:
@@ -94,12 +95,17 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         if qualities:
             qualities = qualities[0].split(",") if isinstance(qualities[0], str) else qualities
 
+        q_desc = ",".join(qualities) if qualities else "любое"
+        log(f"📡 [РАДАР] Запрос витрины [{category}], {year} г., качество: {q_desc}, размер: <={max_size}GB, стр. {page}", "INFO")
+
         data = database.query_releases(
             category=category, days=days, min_rating=min_rating,
             max_size=max_size, qualities=qualities, genre=genre,
             year=year, search=search, page=page, limit=limit,
             deduplicate=True
         )
+
+        log(f"✅ [РАДАР] Найдено {data['total']} релизов (выведено {len(data['items'])} на стр. {page})", "SUCCESS")
 
         # If 0 results with current strict filter, check if category is empty for this year
         if data["total"] == 0 and not search and genre == "all":
@@ -131,6 +137,8 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         if not item:
             self.send_error(404, "Item not found")
             return
+
+        log(f"🎬 [ОТКРЫТИЕ КАРТОЧКИ] #{item_id} «{item.get('title_ru')}» | {item.get('quality')} | КП: {item.get('kp_rating') or '—'} | IMDb: {item.get('imdb_rating') or '—'}", "INFO")
 
         if not item.get("description") and not item.get("audio_info"):
             details = tracker_engine.parse_full_details(item.get("torrent_id"))
