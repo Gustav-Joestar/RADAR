@@ -26,7 +26,11 @@ SHUTDOWN_TIMER = None
 HEARTBEAT_ACTIVE = False
 
 def do_shutdown():
-    log("🛑 [СЕРВЕР] Окно браузера закрыто пользователем. Остановка процесса RADAR...", "INFO")
+    log("🛑 [СЕРВЕР] Окно браузера закрыто пользователем. Очистка сессионного кэша и остановка процесса RADAR...", "INFO")
+    try:
+        database.cleanup_session_cache()
+    except Exception:
+        pass
     time.sleep(0.3)
     os._exit(0)
 
@@ -49,7 +53,11 @@ def watchdog_monitor():
     while True:
         time.sleep(3)
         if HEARTBEAT_ACTIVE and (time.time() - LAST_HEARTBEAT > 120):
-            log("🛑 [СЕРВЕР] Потеряна связь с окном браузера (>120 сек). Остановка сервера RADAR...", "INFO")
+            log("🛑 [СЕРВЕР] Потеряна связь с окном браузера (>120 сек). Очистка сессионного кэша и остановка сервера RADAR...", "INFO")
+            try:
+                database.cleanup_session_cache()
+            except Exception:
+                pass
             time.sleep(0.3)
             os._exit(0)
 
@@ -87,17 +95,23 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/item":
             self.handle_api_item(params)
         elif path == "/api/watchlist":
+            category = params.get("category", ["all"])[0]
             search = params.get("search", [""])[0]
             page = int(params.get("page", ["1"])[0])
             limit = int(params.get("limit", ["15"])[0])
-            self.send_json(database.query_watchlist(search=search, page=page, limit=limit))
+            self.send_json(database.query_watchlist(category=category, search=search, page=page, limit=limit))
         elif path == "/api/ignored":
+            category = params.get("category", ["all"])[0]
             search = params.get("search", [""])[0]
             page = int(params.get("page", ["1"])[0])
             limit = int(params.get("limit", ["15"])[0])
-            self.send_json(database.query_ignored(search=search, page=page, limit=limit))
+            self.send_json(database.query_ignored(category=category, search=search, page=page, limit=limit))
         elif path == "/api/counts":
-            self.send_json(database.get_curation_counts())
+            category = params.get("category", [None])[0]
+            if category:
+                self.send_json(database.get_curation_counts(category=category))
+            else:
+                self.send_json(database.get_all_curation_counts())
         elif path == "/api/logs":
             self.send_json({"logs": get_logs()})
         elif path == "/api/genres":
@@ -235,6 +249,17 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         qualities = params.get("quality", None)
         if qualities:
             qualities = qualities[0].split(",") if isinstance(qualities[0], str) else qualities
+
+        streaming = params.get("streaming", ["all"])[0]
+        voiceover = params.get("voiceover", ["all"])[0]
+        ongoing = params.get("ongoing", ["all"])[0]
+        has_subtitles = params.get("has_subtitles", ["false"])[0].lower() in ("true", "1", "yes")
+        anime_type = params.get("anime_type", ["all"])[0]
+        repack_author = params.get("repack_author", ["all"])[0]
+        release_format = params.get("release_format", ["all"])[0]
+        crack_status = params.get("crack_status", ["all"])[0]
+        software_category = params.get("software_category", ["all"])[0]
+
         if year == "all":
             y_desc = "все годы"
         elif str(year).strip().lower() in ("< 2000", "<2000", "pre2000", "old"):
@@ -254,7 +279,11 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             category=category, min_rating=min_rating,
             max_size=max_size, qualities=qualities, genre=genre,
             year=year, search=search, page=page, limit=limit,
-            deduplicate=True, origin=origin
+            deduplicate=True, origin=origin,
+            streaming=streaming, voiceover=voiceover, ongoing=ongoing,
+            has_subtitles=has_subtitles, anime_type=anime_type,
+            repack_author=repack_author, release_format=release_format,
+            crack_status=crack_status, software_category=software_category
         )
 
         # Initial crawl only if category has 0 items in database
@@ -266,23 +295,27 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
                 category=category, min_rating=min_rating,
                 max_size=max_size, qualities=qualities, genre=genre,
                 year=year, search=search, page=page, limit=limit,
-                deduplicate=True, origin=origin
+                deduplicate=True, origin=origin,
+                streaming=streaming, voiceover=voiceover, ongoing=ongoing,
+                has_subtitles=has_subtitles, anime_type=anime_type,
+                repack_author=repack_author, release_format=release_format,
+                crack_status=crack_status, software_category=software_category
             )
 
-        # In discovery feed (movies, series, anime without search), ensure requested page is filled up to `limit`
-        if category in ("movies", "series", "anime") and not search and len(data["items"]) < limit:
+        # In discovery feed without search, ensure requested page is filled up to `limit`
+        if not search and len(data["items"]) < limit:
             conn = database.get_connection()
             c = conn.cursor()
             origin_filter = ""
             if origin == "russian":
                 origin_filter = "AND (country LIKE '%Россия%' OR country LIKE '%СССР%' OR country LIKE '%РФ%')"
-            elif origin == "foreign":
+            elif origin == "foreign" and category in ("movies", "series"):
                 origin_filter = "AND (country != '' OR title_en != '' OR title LIKE '%/%') AND country NOT LIKE '%Россия%' AND country NOT LIKE '%СССР%' AND country NOT LIKE '%РФ%'"
 
             needed = max(limit - len(data["items"]), 5)
             c.execute(f"""
                 SELECT torrent_id FROM releases 
-                WHERE category = ? AND kp_rating = 0.0 AND imdb_rating = 0.0
+                WHERE category = ?
                   AND (description IS NULL OR description = '')
                   {origin_filter}
                 ORDER BY date_ts DESC LIMIT ?
@@ -297,7 +330,11 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
                     category=category, min_rating=min_rating,
                     max_size=max_size, qualities=qualities, genre=genre,
                     year=year, search=search, page=page, limit=limit,
-                    deduplicate=True, origin=origin
+                    deduplicate=True, origin=origin,
+                    streaming=streaming, voiceover=voiceover, ongoing=ongoing,
+                    has_subtitles=has_subtitles, anime_type=anime_type,
+                    repack_author=repack_author, release_format=release_format,
+                    crack_status=crack_status, software_category=software_category
                 )
 
             # If still fewer than limit (e.g. on page 2, 3... or DB ran out of unparsed), crawl next tracker page
@@ -309,19 +346,25 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
                     category=category, min_rating=min_rating,
                     max_size=max_size, qualities=qualities, genre=genre,
                     year=year, search=search, page=page, limit=limit,
-                    deduplicate=True, origin=origin
+                    deduplicate=True, origin=origin,
+                    streaming=streaming, voiceover=voiceover, ongoing=ongoing,
+                    has_subtitles=has_subtitles, anime_type=anime_type,
+                    repack_author=repack_author, release_format=release_format,
+                    crack_status=crack_status, software_category=software_category
                 )
 
         # In discovery mode, tracker always has more pages available for pagination
-        if category in ("movies", "series", "anime") and not search:
+        if not search:
             data["pages"] = max(data["pages"], page + 1)
 
         # Launch background resolution for any items missing details, ratings or posters
         to_hydrate = [
             it["torrent_id"] for it in data["items"]
-            if (it.get("kp_rating", 0) == 0 and it.get("imdb_rating", 0) == 0) 
-            or not it.get("poster_url") 
-            or (not it.get("description") and not it.get("video_info") and not it.get("audio_info"))
+            if (category in ("movies", "series") and it.get("kp_rating", 0) == 0 and it.get("imdb_rating", 0) == 0)
+            or (category == "anime" and it.get("shikimori_rating", 0) == 0)
+            or (category == "games" and it.get("metacritic_critic", 0) == 0 and not it.get("system_reqs"))
+            or not it.get("poster_url")
+            or (not it.get("description") and not it.get("video_info") and not it.get("system_reqs"))
         ]
         if to_hydrate:
             threading.Thread(
@@ -355,9 +398,9 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Item not found")
                 return
 
-            log(f"🎬 [ОТКРЫТИЕ КАРТОЧКИ] #{item_id} «{item.get('title_ru')}» | {item.get('quality')} | КП: {item.get('kp_rating') or '—'} | IMDb: {item.get('imdb_rating') or '—'}", "INFO")
+            log(f"🎬 [ОТКРЫТИЕ КАРТОЧКИ] #{item_id} «{item.get('title_ru')}» | {item.get('category')} | {item.get('quality')}", "INFO")
 
-            if not item.get("description") and not item.get("audio_info"):
+            if not item.get("description") and not item.get("audio_info") and not item.get("system_reqs"):
                 details = tracker_engine.parse_full_details(item.get("torrent_id"))
                 if details:
                     item = details
@@ -381,7 +424,10 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             c = conn.cursor()
             placeholders = ",".join(["?"] * len(tids))
             c.execute(f"""
-                SELECT torrent_id, poster_url, kp_rating, imdb_rating, genre, country, quality
+                SELECT torrent_id, category, poster_url, kp_rating, imdb_rating, shikimori_rating, mal_rating,
+                       metacritic_critic, metacritic_user, opencritic_rating, genre, country, quality,
+                       release_format, repack_author, app_version, is_ongoing, anime_type,
+                       seasons_count, date_added
                 FROM releases
                 WHERE torrent_id IN ({placeholders})
             """, tids)

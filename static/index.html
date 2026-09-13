@@ -35,6 +35,9 @@
         <button class="cat-btn" data-category="series">
           <span class="cat-icon">📺</span> Сериалы
         </button>
+        <button class="cat-btn" data-category="anime">
+          <span class="cat-icon">⛩️</span> Аниме
+        </button>
         <button class="cat-btn" data-category="games">
           <span class="cat-icon">🎮</span> Игры
         </button>
@@ -42,11 +45,11 @@
           <span class="cat-icon">💻</span> Программы
         </button>
         <div class="nav-divider"></div>
-        <button class="cat-btn cat-watchlist" data-category="watchlist" title="Отобранные фильмы к просмотру">
-          <span class="cat-icon">💚</span> Буду смотреть <span class="nav-count" id="count-watchlist">0</span>
+        <button class="cat-btn cat-watchlist" data-category="watchlist" title="Список «Заинтересовало» для выбранной категории">
+          <span class="cat-icon">💚</span> Заинтересовало <span class="nav-count" id="count-watchlist">0</span>
         </button>
-        <button class="cat-btn cat-ignored" data-category="ignored" title="Отклонённые фильмы">
-          <span class="cat-icon">🚫</span> Не буду смотреть <span class="nav-count" id="count-ignored">0</span>
+        <button class="cat-btn cat-ignored" data-category="ignored" title="Список «Хрень» для выбранной категории">
+          <span class="cat-icon">🚫</span> Хрень <span class="nav-count" id="count-ignored">0</span>
         </button>
       </nav>
     </div>
@@ -56,9 +59,9 @@
     </div>
   </header>
 
-  <!-- Filter & Controls Toolbar -->
+  <!-- Filter & Controls Toolbar (dynamically rendered per category) -->
   <section class="filters-panel">
-    <div class="filters-container">
+    <div class="filters-container" id="filters-container">
       <!-- Tracker Scan Button -->
       <button id="btn-refresh" class="btn-refresh" title="Сканировать трекер и обновить базу данных">
         <span class="refresh-icon">🔄</span> Сканировать трекер
@@ -143,14 +146,14 @@
     <!-- Cards Grid (15 per page) -->
     <div class="cards-grid" id="cards-grid"></div>
 
-    <!-- Compact Table View for 'Не буду смотреть' -->
+    <!-- Compact Table View for 'Хрень' -->
     <div class="table-view-container" id="table-view-container" style="display: none;">
       <table class="ignored-table">
         <thead>
           <tr>
-            <th>Название фильма</th>
-            <th>Год</th>
-            <th>Жанр</th>
+            <th>Название</th>
+            <th>Год / Версия</th>
+            <th>Жанр / Категория</th>
             <th>Рейтинги</th>
             <th style="text-align: right;">Действие</th>
           </tr>
@@ -162,8 +165,8 @@
     <!-- Empty State -->
     <div class="empty-state" id="empty-state" style="display: none;">
       <div class="empty-icon">📡</div>
-      <h3>Ничего не обнаружено с текущими фильтрами</h3>
-      <p>Попробуйте сбросить фильтр по дате или снять галочку рейтинга > 7.0.</p>
+      <h3 class="empty-title">Ничего не обнаружено с текущими фильтрами</h3>
+      <p class="empty-text">Попробуйте сбросить фильтр по дате или снять галочку рейтинга > 7.0.</p>
       <button class="btn-primary" onclick="resetFilters()">Сбросить фильтры</button>
     </div>
 

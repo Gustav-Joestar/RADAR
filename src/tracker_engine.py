@@ -18,7 +18,7 @@ MONTHS = {
 CATEGORY_MAP = {
     "movies": [1, 5, 7],     # 1=Зарубежные фильмы, 5=Наши фильмы, 7=Мультипликация
     "series": [4, 6, 16],    # 4=Зарубежные сериалы, 6=Телевизор, 16=Наши сериалы
-    "anime": [10, 7],        # 10=Аниме, 7=Мультипликация
+    "anime": [10],           # 10=Аниме
     "games": [8],            # 8=Игры
     "software": [9, 12]      # 9, 12=Программы
 }
@@ -30,6 +30,49 @@ CATEGORY_HUBS = {
     "games": ["http://rutor.info/games"],
     "software": ["http://rutor.info/soft"]
 }
+
+STREAMING_PLATFORMS = [
+    ("netflix", "Netflix"), ("hbo", "HBO Max"), ("apple tv", "Apple TV+"),
+    ("amazon", "Amazon Prime"), ("disney", "Disney+"), ("кинопоиск", "Кинопоиск"),
+    ("start", "START"), ("premier", "PREMIER"), ("okko", "Okko"),
+    ("иви", "Иви"), ("ivi", "Иви"), ("kion", "KION"), ("bbc", "BBC"),
+    ("hulu", "Hulu"), ("paramount", "Paramount+"), ("amc", "AMC"),
+    ("showtime", "Showtime"), ("wink", "Wink")
+]
+
+VOICE_STUDIOS_SERIES = [
+    ("lostfilm", "LostFilm"), ("кубик в кубе", "Кубик в кубе"),
+    ("hdrezka", "HDRezka Studio"), ("newstudio", "NewStudio"),
+    ("tvshows", "TVShows"), ("alexfilm", "AlexFilm"),
+    ("пифагор", "Пифагор"), ("дубликат", "Дубликат"),
+    ("coldfilm", "ColdFilm"), ("дубляж", "Дубляж"),
+    ("red head sound", "Red Head Sound"), ("rhs", "Red Head Sound")
+]
+
+VOICE_STUDIOS_ANIME = [
+    ("anilibria", "AniLibria"), ("studio band", "Studio Band"),
+    ("anidub", "AniDUB"), ("shiza project", "SHIZA Project"),
+    ("dream cast", "Dream Cast"), ("kansai", "Kansai Studio"),
+    ("persona99", "Persona99"), ("crunchyroll", "Crunchyroll"),
+    ("reanimedia", "Reanimedia"), ("jam club", "JAM Club"),
+    ("jam", "JAM Club"), ("amber", "Amber"), ("steponee", "StepOnee")
+]
+
+GAME_REPACKERS = [
+    ("fitgirl", "FitGirl"), ("dodi", "DODI"), ("decepticon", "Decepticon"),
+    ("choo-choo", "Choo-Choo"), ("xatab", "xatab"), ("elamigos", "ElAmigos"),
+    ("gog", "GOG"), ("pioneer", "Pioneer"), ("canek77", "Canek77"),
+    ("dixen18", "Dixen18"), ("selezen", "SeleZen"), ("wose", "Wose")
+]
+
+SOFT_REPACKERS = [
+    ("kprojluk", "KpoJluk"), ("кролик", "KpoJluk"),
+    ("m0nkrus", "m0nkrus"), ("монкрус", "m0nkrus"),
+    ("elchupacabra", "elchupacabra"), ("чупакабра", "elchupacabra"),
+    ("d!akov", "D!akov"), ("дьяков", "D!akov"),
+    ("tryroom", "TryRooM"), ("sanmini", "SanMini"),
+    ("beloff", "Beloff"), ("centr", "Centr")
+]
 
 def is_bad_poster(url):
     """Check if poster URL is empty, broken, low-res thumbnail, or rating badge."""
@@ -49,7 +92,7 @@ def is_bad_poster(url):
         return True
     return False
 
-def fetch_web_poster(title_ru, year=0, original_title=""):
+def fetch_web_poster(title_ru, year=0, original_title="", category="movies"):
     if not title_ru or not title_ru.strip():
         return ""
     q_parts = [title_ru.strip()]
@@ -57,13 +100,23 @@ def fetch_web_poster(title_ru, year=0, original_title=""):
         q_parts.append(original_title.strip())
     if year and int(year) > 0:
         q_parts.append(str(year))
-    q_parts.append("постер фильм")
 
-    # Updated fetch_web_poster with height constraint (≤480px)
+    aspect_filter = "+filterui:aspect-tall"
+    if category == "anime":
+        q_parts.append("аниме постер")
+    elif category == "games":
+        q_parts.append("game cover box art")
+    elif category == "software":
+        q_parts.append("icon logo software")
+        aspect_filter = "+filterui:aspect-square"
+    elif category == "series":
+        q_parts.append("постер сериал")
+    else:
+        q_parts.append("постер фильм")
+
     query = " ".join(q_parts)
     q_enc = urllib.parse.quote(query)
-    # Strictly vertical portrait aspect ratio filter
-    url = f"https://www.bing.com/images/search?q={q_enc}&qft=+filterui:aspect-tall&form=IRFLTR"
+    url = f"https://www.bing.com/images/search?q={q_enc}&qft={aspect_filter}&form=IRFLTR"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
@@ -75,8 +128,12 @@ def fetch_web_poster(title_ru, year=0, original_title=""):
         if not murls:
             murls = re.findall(r'"murl":"(https?://[^"]+)"', html)
 
-        # Priority 1: High quality official cinema sites with official vertical art
-        priority_domains = ['avatars.mds.yandex.net', 'kinopoisk', 'kinorium', 'kinonews', 'film.ru', 'kg-portal.ru', 'wikimedia.org', 'lostfilm']
+        # Priority 1: Official high quality media sites
+        priority_domains = [
+            'avatars.mds.yandex.net', 'kinopoisk', 'kinorium', 'shikimori', 'myanimelist',
+            'steamstatic', 'steamrip', 'gog.com', 'igromania', 'stopgame', 'mobygames',
+            'softportal', 'comss', 'kinonews', 'film.ru', 'kg-portal.ru', 'wikimedia.org', 'lostfilm'
+        ]
         for domain in priority_domains:
             for u in murls:
                 if domain in u.lower() and not any(bad in u.lower() for bad in ['logo', 'icon', 'trailer', 'avatar', 'shot', 'banner', 'still']):
@@ -86,10 +143,10 @@ def fetch_web_poster(title_ru, year=0, original_title=""):
         for u in murls:
             u_clean = u.split('?')[0].lower()
             if any(u_clean.endswith(ext) for ext in ('.jpg', '.jpeg', '.png', '.webp')):
-                if not any(bad in u.lower() for bad in ['logo', 'icon', 'banner', 'avatar', 'screenshot']):
+                if not any(bad in u.lower() for bad in ['banner', 'avatar', 'screenshot']):
                     return u
 
-        # Size‑filtered fallback: choose first candidate whose height ≤ 480 px
+        # Size‑filtered fallback: choose first candidate whose height ≤ 480 px
         for candidate in murls:
             try:
                 rr = requests.get(candidate, headers=headers, impersonate='chrome124', timeout=6)
@@ -478,16 +535,28 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
 
                 raw_title = t_link.text.strip()
 
-                # Check for category isolation to strictly prevent games, software, audio, books from leaking into movies/series
+                # Strict category isolation
                 row_links_str = " ".join([a.get('href', '') for a in tr.select('a')])
+                t_lower = raw_title.lower()
+
+                is_anime_row = '/anime' in row_links_str or '/browse/0/10' in row_links_str or '/search/0/10' in row_links_str
                 is_game_row = any(g in row_links_str for g in ['/games', '/browse/0/8', '/search/0/8'])
                 is_soft_row = any(s in row_links_str for s in ['/soft', '/browse/0/9', '/browse/0/12', '/search/0/9', '/search/0/12'])
                 is_other_row = any(o in row_links_str for o in ['/books', '/audio', '/browse/0/2', '/browse/0/11', '/browse/0/13', '/browse/0/14'])
-                t_lower = raw_title.lower()
-                has_non_film_cues = bool(re.search(r'\b(?:repack(?:\s+by|\s+от)?|gog|steam\s*rip|dlc\s*pack|portable|комикс|аудиокнига|журнал|книга|mp3|flac)\b', t_lower))
+                has_game_cues = bool(re.search(r'\b(?:repack\s+от|repack\s+by|steam\s*rip|dlc\s*pack|gog\b|pc\s*\|\s*repack)\b', t_lower))
+                has_soft_cues = bool(re.search(r'\b(?:portable\b|активац|repack\s*by\s*kprojluk|repack\s*by\s*m0nkrus|x64\s*\[\d{4})\b', t_lower))
 
                 if category_name in ("movies", "series"):
-                    if is_game_row or is_soft_row or is_other_row or has_non_film_cues:
+                    if is_anime_row or is_game_row or is_soft_row or is_other_row or has_game_cues or has_soft_cues:
+                        continue
+                elif category_name == "anime":
+                    if is_game_row or is_soft_row or is_other_row or has_game_cues or has_soft_cues:
+                        continue
+                elif category_name == "games":
+                    if is_soft_row or is_other_row or is_anime_row:
+                        continue
+                elif category_name == "software":
+                    if is_game_row or is_other_row or is_anime_row:
                         continue
 
                 tds = tr.find_all('td')
@@ -520,14 +589,14 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                 elif '(' in raw_title:
                     title_ru = raw_title.split('(')[0].strip()
 
-                # Check if release was marked "Не буду смотреть" or "Буду смотреть"
-                is_ign = database.is_ignored(torrent_id, title_ru, rel_year)
-                is_watch = database.is_watchlist(torrent_id, title_ru, rel_year)
+                # Check if release was marked "Не буду смотреть" or "Буду смотреть" (strictly isolated per category)
+                is_ign = database.is_ignored(torrent_id, title_ru, rel_year, category=category_name)
+                is_watch = database.is_watchlist(torrent_id, title_ru, rel_year, category=category_name)
                 initial_status = 'ignored' if is_ign else ('watchlist' if is_watch else 'new')
 
                 # Check if release is already in persistent cache with full details
                 cached = database.get_release_by_id(torrent_id)
-                if cached and (cached.get("description") or cached.get("poster_url") or cached.get("kp_rating") or cached.get("imdb_rating")):
+                if cached and (cached.get("description") or cached.get("poster_url") or cached.get("kp_rating") or cached.get("imdb_rating") or cached.get("shikimori_rating") or cached.get("metacritic_critic")):
                     # ALREADY IN CACHE: update only live seed/peer/size stats
                     database.update_tracker_stats(torrent_id, seeds, peers, size_gb, size_str, date_str, date_ts)
                     scanned_torrent_ids.append(torrent_id)
@@ -542,6 +611,112 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     detected_country = "Россия"
                 elif any(cue in t_lower for cue in ["от exkinoray", "files-x", "сериал ссср", "мосфильм", "ленфильм"]):
                     detected_country = "Россия"
+
+                # Initial genre
+                if category_name == "anime":
+                    init_genre = "Аниме"
+                elif category_name == "games":
+                    init_genre = "Игры"
+                elif category_name == "software":
+                    init_genre = "Программы"
+                elif category_name == "series":
+                    init_genre = "Сериал"
+                else:
+                    init_genre = "Мультфильм" if any(w in t_lower for w in ["мультфильм", "мультсериал"]) else "Фильм"
+
+                # Extract initial title tags
+                voice_studio_init = ""
+                streaming_init = ""
+                repack_author_init = ""
+                release_format_init = ""
+                app_version_init = ""
+                is_ongoing_init = 0
+                episodes_rel_init = 0
+                episodes_tot_init = 0
+                anime_type_init = ""
+                has_subs_init = 1 if any(s in t_lower for s in ["sub", "субтитр"]) else 0
+
+                seasons_count_init = 0
+
+                if category_name == "series":
+                    for kw, plat in STREAMING_PLATFORMS:
+                        if kw in t_lower:
+                            streaming_init = plat
+                            break
+                    for kw, stud in VOICE_STUDIOS_SERIES:
+                        if kw in t_lower:
+                            voice_studio_init = stud
+                            break
+                    m_ep = re.search(r'\[(\d+)-(\d+)\s+из\s+(\d+)\]', raw_title, re.I)
+                    if m_ep:
+                        episodes_rel_init = int(m_ep.group(2))
+                        episodes_tot_init = int(m_ep.group(3))
+                        is_ongoing_init = 1 if episodes_rel_init < episodes_tot_init else 0
+                    elif 'онгоинг' in t_lower:
+                        is_ongoing_init = 1
+
+                    m_multi_s = re.search(r'(?:\[|\()(\d{1,2})-(\d{1,2})\s*сезон', raw_title, re.I)
+                    if m_multi_s:
+                        seasons_count_init = int(m_multi_s.group(2))
+                    else:
+                        m_single_s = re.search(r'(?:\[|\()(?:сезон\s*(\d{1,2})|(\d{1,2})\s*сезон|\s*(\d{1,2})x|\s*S(\d{1,2}))', raw_title, re.I)
+                        if m_single_s:
+                            seasons_count_init = int(m_single_s.group(1) or m_single_s.group(2) or m_single_s.group(3) or m_single_s.group(4) or 1)
+                        else:
+                            seasons_count_init = 1
+
+                elif category_name == "anime":
+                    for kw, stud in VOICE_STUDIOS_ANIME:
+                        if kw in t_lower:
+                            voice_studio_init = stud
+                            break
+                    if any(w in t_lower for w in ["фильм", "movie"]):
+                        anime_type_init = "Полнометражный фильм"
+                        seasons_count_init = 0
+                    elif any(w in t_lower for w in ["ova", "ona"]):
+                        anime_type_init = "OVA / ONA"
+                        seasons_count_init = 1
+                    else:
+                        anime_type_init = "ТВ-сериал"
+                        m_multi_s = re.search(r'(?:\[|\()(\d{1,2})-(\d{1,2})\s*сезон', raw_title, re.I)
+                        if m_multi_s:
+                            seasons_count_init = int(m_multi_s.group(2))
+                        else:
+                            m_single_s = re.search(r'(?:\[|\()(?:сезон\s*(\d{1,2})|(\d{1,2})\s*сезон|\s*(\d{1,2})x|\s*S(\d{1,2}))', raw_title, re.I)
+                            if m_single_s:
+                                seasons_count_init = int(m_single_s.group(1) or m_single_s.group(2) or m_single_s.group(3) or m_single_s.group(4) or 1)
+                            else:
+                                seasons_count_init = 1
+                        anime_type_init = "ТВ-сериал"
+
+                elif category_name == "games":
+                    for kw, auth in GAME_REPACKERS:
+                        if kw in t_lower:
+                            repack_author_init = auth
+                            break
+                    if "repack" in t_lower:
+                        release_format_init = "RePack"
+                    elif "portable" in t_lower:
+                        release_format_init = "Portable"
+                    elif "steam-rip" in t_lower or "steamrip" in t_lower:
+                        release_format_init = "Steam-Rip"
+                    elif "gog" in t_lower:
+                        release_format_init = "GOG"
+
+                elif category_name == "software":
+                    for kw, auth in SOFT_REPACKERS:
+                        if kw in t_lower:
+                            repack_author_init = auth
+                            break
+                    if "repack" in t_lower and "portable" in t_lower:
+                        release_format_init = "RePack & Portable"
+                    elif "repack" in t_lower:
+                        release_format_init = "RePack"
+                    elif "portable" in t_lower:
+                        release_format_init = "Portable"
+                    m_v = re.search(r'\b(?:v|версия)?\s*(\d+\.\d+(?:\.\d+)*)\b', raw_title, re.I)
+                    if m_v:
+                        app_version_init = m_v.group(1)
 
                 item_data = {
                     "torrent_id": torrent_id,
@@ -562,7 +737,7 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     "audio_tracks": "[]",
                     "voiceover": "",
                     "subtitles": "",
-                    "genre": "Мультфильм" if any(w in t_lower for w in ["мультфильм", "мультсериал", "аниме"]) else ("Сериал" if category_name == "series" else "Фильм"),
+                    "genre": init_genre,
                     "director": "",
                     "actors": "",
                     "description": "",
@@ -576,7 +751,28 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     "source_url": f"http://rutor.info{href}",
                     "seasons_info": "[]",
                     "mediainfo": "",
-                    "user_status": initial_status
+                    "user_status": initial_status,
+                    "episodes_released": episodes_rel_init,
+                    "episodes_total": episodes_tot_init,
+                    "seasons_count": seasons_count_init,
+                    "streaming_platform": streaming_init,
+                    "voice_studio": voice_studio_init,
+                    "repack_author": repack_author_init,
+                    "release_format": release_format_init,
+                    "crack_status": "",
+                    "app_version": app_version_init,
+                    "screenshots_json": "[]",
+                    "shikimori_rating": 0.0,
+                    "mal_rating": 0.0,
+                    "metacritic_critic": 0.0,
+                    "metacritic_user": 0.0,
+                    "opencritic_rating": 0.0,
+                    "has_subtitles": has_subs_init,
+                    "is_ongoing": is_ongoing_init,
+                    "anime_type": anime_type_init,
+                    "software_category": "",
+                    "system_reqs": "",
+                    "repack_features": ""
                 }
                 database.upsert_release(item_data)
                 scanned_torrent_ids.append(torrent_id)
@@ -683,6 +879,115 @@ def fetch_ratings_by_search(title_ru, title_en="", year=0):
     # Always cache result (even if 0) so we never repeat slow lookups for the same movie
     RATINGS_SEARCH_CACHE[cache_key] = result
     return result
+
+SHIKIMORI_CACHE = {}
+
+def fetch_shikimori_rating(title_ru, title_en=""):
+    """Fast lookup for anime rating on Shikimori API (scores mirror MyAnimeList)."""
+    cache_key = (title_ru.lower().strip() if title_ru else "", title_en.lower().strip() if title_en else "")
+    if cache_key in SHIKIMORI_CACHE:
+        return SHIKIMORI_CACHE[cache_key]
+
+    queries = []
+    if title_en and len(title_en) >= 3:
+        queries.append(title_en)
+    if title_ru and len(title_ru) >= 3:
+        queries.append(title_ru)
+
+    headers = {
+        "User-Agent": "RADAR-Anime/2.0 (Media Release Discovery)",
+        "Accept": "application/json"
+    }
+
+    for q in queries:
+        try:
+            url = f"https://shikimori.one/api/animes?search={urllib.parse.quote(q)}&limit=1"
+            r = requests.get(url, headers=headers, impersonate="chrome124", timeout=2.5)
+            if r.status_code == 200:
+                data = r.json()
+                if data and isinstance(data, list) and len(data) > 0:
+                    item = data[0]
+                    score = float(item.get("score") or 0.0)
+                    if score > 0:
+                        res = (round(score, 1), round(score, 1))
+                        SHIKIMORI_CACHE[cache_key] = res
+                        return res
+        except Exception:
+            pass
+
+    SHIKIMORI_CACHE[cache_key] = (0.0, 0.0)
+    return (0.0, 0.0)
+
+def extract_game_ratings(full_text):
+    """Parse Metacritic (critic/user) and OpenCritic ratings from torrent description."""
+    mc_critic = 0.0
+    mc_user = 0.0
+    oc_rating = 0.0
+
+    # Metacritic critic (e.g. Metacritic: 86/100, Metacritic: 85)
+    m_mc = re.search(r'Metacritic[:\s*]+([0-9]{2,3})(?:\s*/\s*100)?', full_text, re.I)
+    if m_mc:
+        try:
+            val = float(m_mc.group(1))
+            if 0 < val <= 100:
+                mc_critic = val
+        except Exception:
+            pass
+
+    # Metacritic user (e.g. Metacritic user: 8.2/10, Пользовательский рейтинг: 8.4)
+    m_user = re.search(r'(?:Metacritic\s*user|Пользовательский\s*рейтинг|User\s*score)[:\s*]+([0-9](?:\.[0-9])?)(?:\s*/\s*10)?', full_text, re.I)
+    if m_user:
+        try:
+            val = float(m_user.group(1))
+            if 0 < val <= 10:
+                mc_user = val
+        except Exception:
+            pass
+
+    # OpenCritic (e.g. OpenCritic: 88, OpenCritic: 84/100)
+    m_oc = re.search(r'OpenCritic[:\s*]+([0-9]{2,3})(?:\s*/\s*100)?', full_text, re.I)
+    if m_oc:
+        try:
+            val = float(m_oc.group(1))
+            if 0 < val <= 100:
+                oc_rating = val
+        except Exception:
+            pass
+
+    return mc_critic, mc_user, oc_rating
+
+def extract_screenshots_from_details(details_table, main_poster_url=""):
+    """Extract strictly screenshot image URLs from torrent details table without downloading them to disk."""
+    if not details_table:
+        return []
+    screens = []
+    seen = set()
+    if main_poster_url:
+        seen.add(main_poster_url.lower().strip())
+
+    for img in details_table.select('img'):
+        src = img.get('src', '')
+        if not src:
+            continue
+        if src.startswith('//'):
+            src = 'https:' + src
+        s_lower = src.lower().strip()
+        if not s_lower.startswith(('http://', 'https://')):
+            continue
+        # Strictly filter out badges, icons, logos, counters, smilies, flags, userbars
+        if any(bad in s_lower for bad in [
+            'rating', 'kinopoisk.ru', 'imdb/pic', '.gif', 'arrowup', 'arrowdown',
+            'smilies', 'flag', 'rus_flag', 'flag_', 'userbar', 'button', 'logo_mini',
+            's.rutor.info', 'counter', 'banner', 'pixel', 'stat', 'icon'
+        ]):
+            continue
+        if s_lower in seen:
+            continue
+        seen.add(s_lower)
+        screens.append(src.strip())
+        if len(screens) >= 16:  # Cap at 16 screenshots
+            break
+    return screens
 
 def backfill_missing_ratings(limit=30):
     """Background worker that finds movies in DB with 0 ratings and looks them up."""
@@ -965,12 +1270,14 @@ def parse_full_details(torrent_id):
 
         if existing:
             update_data = dict(existing)
+            cat = update_data.get("category", "movies") or "movies"
+
             # Re-evaluate quality accurately using video_info resolution
             accurate_quality = extract_quality(update_data.get("title", ""), video_info)
 
             final_poster = ""
             # Priority 1: Official HD Kinopoisk poster directly from CDN (guaranteed clean, official, no flags/ads)
-            if kp_id:
+            if kp_id and cat in ("movies", "series"):
                 # 1. High-resolution film_big (typically 80-200 KB)
                 kp_big_url = f"https://st.kp.yandex.net/images/film_big/{kp_id}.jpg"
                 local_kp = cache_poster_locally(torrent_id, kp_big_url, min_size_bytes=30000)
@@ -983,13 +1290,131 @@ def parse_full_details(torrent_id):
                     if local_kp and local_kp.startswith("/posters/"):
                         final_poster = local_kp
 
-            # Priority 2: Rutor tracker candidates (strictly filtered: min 15 KB, vertical, no icons/flags)
+            # Priority 2: Rutor tracker candidates (strictly filtered: min 10 KB, no icons/flags)
             if not final_poster:
                 for cand in poster_candidates:
-                    local_poster = cache_poster_locally(torrent_id, cand, min_size_bytes=15360)
+                    local_poster = cache_poster_locally(torrent_id, cand, min_size_bytes=10240)
                     if local_poster and local_poster.startswith("/posters/"):
                         final_poster = local_poster
                         break
+
+            # Priority 3: Targeted web search poster per category
+            if not final_poster:
+                web_p = fetch_web_poster(t_ru, r_year, t_en, category=cat)
+                if web_p and not is_bad_poster(web_p):
+                    local_web = cache_poster_locally(torrent_id, web_p)
+                    if local_web and local_web.startswith("/posters/"):
+                        final_poster = local_web
+
+            # Screenshot extraction (URLs only, zero disk download)
+            screenshots_list = extract_screenshots_from_details(details_table, final_poster)
+
+            # Category-specific metadata extraction
+            shikimori_score, mal_score = 0.0, 0.0
+            mc_critic, mc_user, oc_rating = 0.0, 0.0, 0.0
+            streaming_plat = update_data.get("streaming_platform", "") or ""
+            voice_stud = update_data.get("voice_studio", "") or ""
+            repack_auth = update_data.get("repack_author", "") or ""
+            rel_format = update_data.get("release_format", "") or ""
+            crack_stat = update_data.get("crack_status", "") or ""
+            app_ver = update_data.get("app_version", "") or ""
+            soft_cat = update_data.get("software_category", "") or ""
+            sys_reqs = update_data.get("system_reqs", "") or ""
+            repack_feats = update_data.get("repack_features", "") or ""
+            anime_type_val = update_data.get("anime_type", "") or ""
+            is_ong_val = update_data.get("is_ongoing", 0) or 0
+            ep_rel_val = update_data.get("episodes_released", 0) or 0
+            ep_tot_val = update_data.get("episodes_total", 0) or 0
+
+            f_lower = (full_text + " " + (update_data.get("title") or "")).lower()
+
+            if cat == "series":
+                for kw, plat in STREAMING_PLATFORMS:
+                    if kw in f_lower:
+                        streaming_plat = plat
+                        break
+                for kw, stud in VOICE_STUDIOS_SERIES:
+                    if kw in f_lower:
+                        voice_stud = stud
+                        break
+                m_ep = re.search(r'\[(\d+)-(\d+)\s+из\s+(\d+)\]', raw_title, re.I)
+                if m_ep:
+                    ep_rel_val = int(m_ep.group(2))
+                    ep_tot_val = int(m_ep.group(3))
+                    is_ong_val = 1 if ep_rel_val < ep_tot_val else 0
+                elif 'онгоинг' in f_lower:
+                    is_ong_val = 1
+
+            elif cat == "anime":
+                for kw, stud in VOICE_STUDIOS_ANIME:
+                    if kw in f_lower:
+                        voice_stud = stud
+                        break
+                if any(w in f_lower for w in ["фильм", "movie"]):
+                    anime_type_val = "Полнометражный фильм"
+                elif any(w in f_lower for w in ["ova", "ona"]):
+                    anime_type_val = "OVA / ONA"
+                else:
+                    anime_type_val = "ТВ-сериал"
+                shikimori_score, mal_score = fetch_shikimori_rating(t_ru, t_en)
+
+            elif cat == "games":
+                mc_critic, mc_user, oc_rating = extract_game_ratings(full_text)
+                for kw, auth in GAME_REPACKERS:
+                    if kw in f_lower:
+                        repack_auth = auth
+                        break
+                if "repack" in f_lower:
+                    rel_format = "RePack"
+                elif "portable" in f_lower:
+                    rel_format = "Portable"
+                elif "steam-rip" in f_lower or "steamrip" in f_lower:
+                    rel_format = "Steam-Rip"
+                elif "gog" in f_lower:
+                    rel_format = "GOG"
+
+                m_crack = re.search(r'(?:Таблетка|Crack|Защита)\s*:\s*([^\n\r]+)', full_text, re.I)
+                if m_crack:
+                    crack_stat = m_crack.group(1).strip()
+                m_req = re.search(r'(?:Системные требования|System requirements):\s*\n*(.*?)(?=\n\s*(?:{STOP_METADATA_FIELDS}|Описание|Особенности|Скриншоты)\s*:|\Z)', full_text, re.DOTALL | re.I)
+                if m_req:
+                    sys_reqs = m_req.group(1).strip()[:1500]
+                m_feats = re.search(r'(?:Особенности репака|Особенности RePack|Особенности релиза):\s*\n*(.*?)(?=\n\s*(?:{STOP_METADATA_FIELDS}|Системные|Скриншоты|Описание)\s*:|\Z)', full_text, re.DOTALL | re.I)
+                if m_feats:
+                    repack_feats = m_feats.group(1).strip()[:1500]
+
+            elif cat == "software":
+                for kw, auth in SOFT_REPACKERS:
+                    if kw in f_lower:
+                        repack_auth = auth
+                        break
+                if "repack" in f_lower and "portable" in f_lower:
+                    rel_format = "RePack & Portable"
+                elif "repack" in f_lower:
+                    rel_format = "RePack"
+                elif "portable" in f_lower:
+                    rel_format = "Portable"
+
+                m_v = re.search(r'\b(?:v|версия)?\s*(\d+\.\d+(?:\.\d+)*)\b', raw_title, re.I)
+                if m_v:
+                    app_ver = m_v.group(1)
+
+                m_req = re.search(r'(?:Системные требования|ОС|Операционная система):\s*([^\n\r]+)', full_text, re.I)
+                if m_req:
+                    sys_reqs = m_req.group(1).strip()
+
+                if any(k in f_lower for k in ["антивирус", "защит", "security", "firewall"]):
+                    soft_cat = "Безопасность"
+                elif any(k in f_lower for k in ["график", "photoshop", "editor", "рисова", "paint", "cad", "corel"]):
+                    soft_cat = "Графика"
+                elif any(k in f_lower for k in ["офис", "office", "word", "pdf", "текст"]):
+                    soft_cat = "Офис"
+                elif any(k in f_lower for k in ["плеер", "player", "кодек", "codec", "audio", "video", "конвертер"]):
+                    soft_cat = "Мультимедиа"
+                elif any(k in f_lower for k in ["браузер", "browser", "торрент", "torrent", "vpn", "download"]):
+                    soft_cat = "Интернет"
+                else:
+                    soft_cat = "Система"
 
             update_data.update({
                 "quality": accurate_quality,
@@ -1009,11 +1434,41 @@ def parse_full_details(torrent_id):
                 "imdb_rating": imdb_rating or update_data.get("imdb_rating", 0.0),
                 "kp_rating": kp_rating or update_data.get("kp_rating", 0.0),
                 "seasons_info": json.dumps(seasons_info, ensure_ascii=False),
-                "mediainfo": mediainfo
+                "mediainfo": mediainfo,
+                "screenshots_json": json.dumps(screenshots_list, ensure_ascii=False),
+                "shikimori_rating": shikimori_score or update_data.get("shikimori_rating", 0.0),
+                "mal_rating": mal_score or update_data.get("mal_rating", 0.0),
+                "metacritic_critic": mc_critic or update_data.get("metacritic_critic", 0.0),
+                "metacritic_user": mc_user or update_data.get("metacritic_user", 0.0),
+                "opencritic_rating": oc_rating or update_data.get("opencritic_rating", 0.0),
+                "streaming_platform": streaming_plat,
+                "voice_studio": voice_stud,
+                "repack_author": repack_auth,
+                "release_format": rel_format,
+                "crack_status": crack_stat,
+                "app_version": app_ver,
+                "software_category": soft_cat,
+                "system_reqs": sys_reqs,
+                "repack_features": repack_feats,
+                "anime_type": anime_type_val,
+                "is_ongoing": is_ong_val,
+                "episodes_released": ep_rel_val,
+                "episodes_total": ep_tot_val,
+                "seasons_count": max(len(seasons_info) if seasons_info else 0, update_data.get("seasons_count", 0)),
+                "has_subtitles": 1 if (subtitles_list or subtitles_str_fallback) else 0
             })
             database.upsert_release(update_data)
-            r_str = f"КП {kp_rating or '—'} / IMDb {imdb_rating or '—'}"
-            log(f"🎬 [ДЕТАЛИ] #{torrent_id} «{update_data.get('title_ru')[:35]}» | {accurate_quality} | {r_str} | Обложка: {'✅' if update_data.get('poster_url') else '❌'}", "SUCCESS")
+
+            if cat == "anime":
+                r_str = f"Shikimori: {shikimori_score or '—'}"
+            elif cat == "games":
+                r_str = f"MC: {mc_critic or '—'} / OC: {oc_rating or '—'}"
+            elif cat == "software":
+                r_str = f"Версия: {app_ver or '—'}"
+            else:
+                r_str = f"КП {kp_rating or '—'} / IMDb {imdb_rating or '—'}"
+
+            log(f"🎬 [ДЕТАЛИ] #{torrent_id} «{update_data.get('title_ru')[:35]}» | {cat} | {accurate_quality} | {r_str} | Обложка: {'✅' if update_data.get('poster_url') else '❌'} | Кадры: {len(screenshots_list)}", "SUCCESS")
             return update_data
 
         return None

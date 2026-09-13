@@ -44,12 +44,19 @@ def _py_like(pattern, value):
     return bool(re.match(regex, val, re.DOTALL))
 
 def clean_dedup_key(title_ru, title_en, year):
-    # If English title is present, group primarily by normalized English title (eliminates 2017 vs 2018 differences)
-    en = re.sub(r'[^\w\s]', '', normalize_text(title_en))
+    # Strip common repack / version / noise tags to properly group game, soft, and series torrents
+    def strip_noise(t):
+        if not t:
+            return ""
+        s = re.sub(r'\[(?:repack|portable|repack by|от|v\s*[\d\.]+|сезон\s*\d+|серии\s*[\d\-]+)[^\]]*\]', '', t, flags=re.I)
+        s = re.sub(r'\((?:repack|portable|repack by|от|сезон\s*\d+|серии\s*[\d\-]+)[^\)]*\)', '', s, flags=re.I)
+        s = re.sub(r'[^\w\s]', '', normalize_text(s))
+        return re.sub(r'\s+', ' ', s).strip()
+
+    en = strip_noise(title_en)
     if en and len(en) >= 3:
         return f"en_{en}"
-    # Otherwise group by normalized Russian title without punctuation (e/ё normalized)
-    ru = re.sub(r'[^\w\s]', '', normalize_text(title_ru))
+    ru = strip_noise(title_ru)
     if ru and len(ru) >= 3:
         return f"ru_{ru}"
     raw = normalize_text(title_ru)
@@ -103,14 +110,60 @@ def init_db():
         seasons_info TEXT,
         mediainfo TEXT,
         user_status TEXT DEFAULT 'new',
-        updated_at INTEGER
+        updated_at INTEGER,
+        episodes_released INTEGER DEFAULT 0,
+        episodes_total INTEGER DEFAULT 0,
+        seasons_count INTEGER DEFAULT 0,
+        streaming_platform TEXT DEFAULT '',
+        voice_studio TEXT DEFAULT '',
+        repack_author TEXT DEFAULT '',
+        release_format TEXT DEFAULT '',
+        crack_status TEXT DEFAULT '',
+        app_version TEXT DEFAULT '',
+        screenshots_json TEXT DEFAULT '[]',
+        shikimori_rating REAL DEFAULT 0.0,
+        mal_rating REAL DEFAULT 0.0,
+        metacritic_critic REAL DEFAULT 0.0,
+        metacritic_user REAL DEFAULT 0.0,
+        opencritic_rating REAL DEFAULT 0.0,
+        has_subtitles INTEGER DEFAULT 0,
+        is_ongoing INTEGER DEFAULT 0,
+        anime_type TEXT DEFAULT '',
+        software_category TEXT DEFAULT '',
+        system_reqs TEXT DEFAULT '',
+        repack_features TEXT DEFAULT ''
     )
     """)
-    # Migration: add user_status if table already existed without it
+    # Migration: check existing columns in releases and add missing ones
     c.execute("PRAGMA table_info(releases)")
     cols = [r[1] for r in c.fetchall()]
-    if "user_status" not in cols:
-        c.execute("ALTER TABLE releases ADD COLUMN user_status TEXT DEFAULT 'new'")
+    new_columns = {
+        "user_status": "TEXT DEFAULT 'new'",
+        "episodes_released": "INTEGER DEFAULT 0",
+        "episodes_total": "INTEGER DEFAULT 0",
+        "seasons_count": "INTEGER DEFAULT 0",
+        "streaming_platform": "TEXT DEFAULT ''",
+        "voice_studio": "TEXT DEFAULT ''",
+        "repack_author": "TEXT DEFAULT ''",
+        "release_format": "TEXT DEFAULT ''",
+        "crack_status": "TEXT DEFAULT ''",
+        "app_version": "TEXT DEFAULT ''",
+        "screenshots_json": "TEXT DEFAULT '[]'",
+        "shikimori_rating": "REAL DEFAULT 0.0",
+        "mal_rating": "REAL DEFAULT 0.0",
+        "metacritic_critic": "REAL DEFAULT 0.0",
+        "metacritic_user": "REAL DEFAULT 0.0",
+        "opencritic_rating": "REAL DEFAULT 0.0",
+        "has_subtitles": "INTEGER DEFAULT 0",
+        "is_ongoing": "INTEGER DEFAULT 0",
+        "anime_type": "TEXT DEFAULT ''",
+        "software_category": "TEXT DEFAULT ''",
+        "system_reqs": "TEXT DEFAULT ''",
+        "repack_features": "TEXT DEFAULT ''"
+    }
+    for col_name, col_def in new_columns.items():
+        if col_name not in cols:
+            c.execute(f"ALTER TABLE releases ADD COLUMN {col_name} {col_def}")
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS ignored_releases (
@@ -127,6 +180,10 @@ def init_db():
         created_at INTEGER
     )
     """)
+    c.execute("PRAGMA table_info(ignored_releases)")
+    ign_cols = [r[1] for r in c.fetchall()]
+    if "category" not in ign_cols:
+        c.execute("ALTER TABLE ignored_releases ADD COLUMN category TEXT DEFAULT 'movies'")
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS watchlist_releases (
@@ -144,6 +201,10 @@ def init_db():
         created_at INTEGER
     )
     """)
+    c.execute("PRAGMA table_info(watchlist_releases)")
+    watch_cols = [r[1] for r in c.fetchall()]
+    if "category" not in watch_cols:
+        c.execute("ALTER TABLE watchlist_releases ADD COLUMN category TEXT DEFAULT 'movies'")
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS crawl_progress (
@@ -158,14 +219,17 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_cat_size ON releases(category, size_gb)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cat_rating ON releases(category, imdb_rating, kp_rating)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_releases_status ON releases(category, user_status)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_ign_title ON ignored_releases(title_ru, year)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_watch_title ON watchlist_releases(title_ru, year)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_releases_studio ON releases(category, voice_studio)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_releases_format ON releases(category, release_format)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_releases_repack ON releases(category, repack_author)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ign_title ON ignored_releases(category, title_ru, year)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_watch_title ON watchlist_releases(category, title_ru, year)")
 
     # Migrate any existing watchlist items from releases into watchlist_releases
     c.execute("""
         INSERT OR IGNORE INTO watchlist_releases 
         (torrent_id, category, title, title_ru, title_en, year, genre, kp_rating, imdb_rating, poster_url, created_at)
-        SELECT torrent_id, category, title, title_ru, title_en, year, genre, kp_rating, imdb_rating, poster_url, COALESCE(updated_at, 0)
+        SELECT torrent_id, COALESCE(category, 'movies'), title, title_ru, title_en, year, genre, kp_rating, imdb_rating, poster_url, COALESCE(updated_at, 0)
         FROM releases WHERE user_status = 'watchlist'
     """)
 
@@ -173,7 +237,7 @@ def init_db():
     c.execute("""
         INSERT OR IGNORE INTO ignored_releases 
         (torrent_id, category, title, title_ru, title_en, year, genre, kp_rating, imdb_rating, created_at)
-        SELECT torrent_id, category, title, title_ru, title_en, year, genre, kp_rating, imdb_rating, COALESCE(updated_at, 0)
+        SELECT torrent_id, COALESCE(category, 'movies'), title, title_ru, title_en, year, genre, kp_rating, imdb_rating, COALESCE(updated_at, 0)
         FROM releases WHERE user_status = 'ignored'
     """)
 
@@ -190,7 +254,12 @@ def upsert_release(data):
         "quality", "video_info", "audio_info", "audio_tracks", "voiceover",
         "subtitles", "genre", "director", "actors", "description", "country",
         "duration", "imdb_rating", "kp_rating", "poster_url", "torrent_url",
-        "magnet_url", "source_url", "seasons_info", "mediainfo", "user_status", "updated_at"
+        "magnet_url", "source_url", "seasons_info", "mediainfo", "user_status", "updated_at",
+        "episodes_released", "episodes_total", "seasons_count", "streaming_platform",
+        "voice_studio", "repack_author", "release_format", "crack_status",
+        "app_version", "screenshots_json", "shikimori_rating", "mal_rating",
+        "metacritic_critic", "metacritic_user", "opencritic_rating", "has_subtitles",
+        "is_ongoing", "anime_type", "software_category", "system_reqs", "repack_features"
     ]
     data["updated_at"] = now
     if "user_status" not in data or not data["user_status"]:
@@ -233,7 +302,28 @@ def upsert_release(data):
         "seasons_info = CASE WHEN excluded.seasons_info != '' AND excluded.seasons_info != '[]' THEN excluded.seasons_info ELSE releases.seasons_info END",
         "mediainfo = CASE WHEN excluded.mediainfo != '' THEN excluded.mediainfo ELSE releases.mediainfo END",
         "user_status = COALESCE(NULLIF(releases.user_status, ''), excluded.user_status, 'new')",
-        "updated_at = excluded.updated_at"
+        "updated_at = excluded.updated_at",
+        "episodes_released = CASE WHEN excluded.episodes_released > 0 THEN excluded.episodes_released ELSE releases.episodes_released END",
+        "episodes_total = CASE WHEN excluded.episodes_total > 0 THEN excluded.episodes_total ELSE releases.episodes_total END",
+        "seasons_count = CASE WHEN excluded.seasons_count > COALESCE(releases.seasons_count, 0) THEN excluded.seasons_count ELSE releases.seasons_count END",
+        "streaming_platform = CASE WHEN excluded.streaming_platform != '' THEN excluded.streaming_platform ELSE releases.streaming_platform END",
+        "voice_studio = CASE WHEN excluded.voice_studio != '' THEN excluded.voice_studio ELSE releases.voice_studio END",
+        "repack_author = CASE WHEN excluded.repack_author != '' THEN excluded.repack_author ELSE releases.repack_author END",
+        "release_format = CASE WHEN excluded.release_format != '' THEN excluded.release_format ELSE releases.release_format END",
+        "crack_status = CASE WHEN excluded.crack_status != '' THEN excluded.crack_status ELSE releases.crack_status END",
+        "app_version = CASE WHEN excluded.app_version != '' THEN excluded.app_version ELSE releases.app_version END",
+        "screenshots_json = CASE WHEN excluded.screenshots_json != '' AND excluded.screenshots_json != '[]' THEN excluded.screenshots_json ELSE releases.screenshots_json END",
+        "shikimori_rating = CASE WHEN excluded.shikimori_rating > 0 THEN excluded.shikimori_rating ELSE releases.shikimori_rating END",
+        "mal_rating = CASE WHEN excluded.mal_rating > 0 THEN excluded.mal_rating ELSE releases.mal_rating END",
+        "metacritic_critic = CASE WHEN excluded.metacritic_critic > 0 THEN excluded.metacritic_critic ELSE releases.metacritic_critic END",
+        "metacritic_user = CASE WHEN excluded.metacritic_user > 0 THEN excluded.metacritic_user ELSE releases.metacritic_user END",
+        "opencritic_rating = CASE WHEN excluded.opencritic_rating > 0 THEN excluded.opencritic_rating ELSE releases.opencritic_rating END",
+        "has_subtitles = CASE WHEN excluded.has_subtitles > 0 THEN excluded.has_subtitles ELSE releases.has_subtitles END",
+        "is_ongoing = CASE WHEN excluded.is_ongoing > 0 THEN excluded.is_ongoing ELSE releases.is_ongoing END",
+        "anime_type = CASE WHEN excluded.anime_type != '' THEN excluded.anime_type ELSE releases.anime_type END",
+        "software_category = CASE WHEN excluded.software_category != '' THEN excluded.software_category ELSE releases.software_category END",
+        "system_reqs = CASE WHEN excluded.system_reqs != '' THEN excluded.system_reqs ELSE releases.system_reqs END",
+        "repack_features = CASE WHEN excluded.repack_features != '' THEN excluded.repack_features ELSE releases.repack_features END"
     ]
     update_clause = ", ".join(conflict_clauses)
 
@@ -263,14 +353,18 @@ def clear_cache():
     conn = get_connection()
     c = conn.cursor()
     c.execute("DELETE FROM releases")
-    c.execute("VACUUM")
     conn.commit()
+    conn.isolation_level = None
+    conn.execute("VACUUM")
     conn.close()
 
-def query_releases(category="movies", min_rating=0.0, max_size=15.0,
-                   qualities=None, genre=None, year="2026", search=None,
+def query_releases(category="movies", min_rating=0.0, max_size=999.0,
+                   qualities=None, genre=None, year="all", search=None,
                    page=1, limit=15, deduplicate=True, days=0, origin="all",
-                   require_rating=False):
+                   require_rating=False, streaming=None, voiceover=None,
+                   ongoing=False, has_subtitles=False, anime_type=None,
+                   repack_author=None, release_format=None, crack_status=None,
+                   software_category=None):
     conn = get_connection()
     c = conn.cursor()
 
@@ -281,24 +375,28 @@ def query_releases(category="movies", min_rating=0.0, max_size=15.0,
     # If searching by title, return all matching items regardless of user_status (so status badges can show)
     if not (search and search.strip()):
         conditions.append("(releases.user_status IS NULL OR releases.user_status = 'new')")
-        conditions.append("releases.torrent_id NOT IN (SELECT torrent_id FROM ignored_releases)")
-        conditions.append("releases.torrent_id NOT IN (SELECT torrent_id FROM watchlist_releases)")
+        conditions.append("releases.torrent_id NOT IN (SELECT torrent_id FROM ignored_releases WHERE category = ?)")
+        params.append(category)
+        conditions.append("releases.torrent_id NOT IN (SELECT torrent_id FROM watchlist_releases WHERE category = ?)")
+        params.append(category)
         conditions.append("""
             NOT EXISTS (
                 SELECT 1 FROM ignored_releases ig 
-                WHERE ig.title_ru IS NOT NULL AND ig.year IS NOT NULL 
+                WHERE ig.category = ? AND ig.title_ru IS NOT NULL AND ig.year IS NOT NULL 
                   AND lower(trim(ig.title_ru)) = lower(trim(releases.title_ru)) 
                   AND ig.year = releases.year
             )
         """)
+        params.append(category)
         conditions.append("""
             NOT EXISTS (
                 SELECT 1 FROM watchlist_releases wl 
-                WHERE wl.title_ru IS NOT NULL AND wl.year IS NOT NULL 
+                WHERE wl.category = ? AND wl.title_ru IS NOT NULL AND wl.year IS NOT NULL 
                   AND lower(trim(wl.title_ru)) = lower(trim(releases.title_ru)) 
                   AND wl.year = releases.year
             )
         """)
+        params.append(category)
 
     # Origin filter (Russian vs Foreign vs All)
     if origin == "russian":
@@ -347,14 +445,26 @@ def query_releases(category="movies", min_rating=0.0, max_size=15.0,
         conditions.append("size_gb <= ?")
         params.append(max_size)
 
-    # Rating filter:
-    if category in ("movies", "series", "anime"):
+    # Rating filter per category:
+    if category in ("movies", "series"):
         if min_rating and min_rating > 0:
             conditions.append("(imdb_rating >= ? OR kp_rating >= ?)")
             params.append(min_rating)
             params.append(min_rating)
         elif require_rating and not (search and search.strip()):
             conditions.append("(imdb_rating > 0 OR kp_rating > 0)")
+    elif category == "anime":
+        if min_rating and min_rating > 0:
+            conditions.append("(shikimori_rating >= ? OR mal_rating >= ? OR kp_rating >= ? OR imdb_rating >= ?)")
+            params.extend([min_rating, min_rating, min_rating, min_rating])
+        elif require_rating and not (search and search.strip()):
+            conditions.append("(shikimori_rating > 0 OR mal_rating > 0 OR kp_rating > 0 OR imdb_rating > 0)")
+    elif category == "games":
+        if min_rating and min_rating > 0:
+            # Metacritic is typically out of 100 or 10
+            mc_min = min_rating * 10 if min_rating <= 10 else min_rating
+            conditions.append("(metacritic_critic >= ? OR metacritic_user >= ? OR opencritic_rating >= ?)")
+            params.extend([mc_min, min_rating, mc_min])
 
     # Quality filter
     if qualities and len(qualities) > 0 and category in ("movies", "series", "anime"):
@@ -368,6 +478,54 @@ def query_releases(category="movies", min_rating=0.0, max_size=15.0,
     if genre and genre != "all":
         conditions.append("lower(genre) LIKE ?")
         params.append(f"%{genre.strip().lower()}%")
+
+    # Series-specific filters
+    if category == "series":
+        if streaming and streaming != "all":
+            conditions.append("lower(streaming_platform) LIKE ?")
+            params.append(f"%{streaming.strip().lower()}%")
+        if voiceover and voiceover != "all":
+            conditions.append("(lower(voiceover) LIKE ? OR lower(voice_studio) LIKE ?)")
+            params.extend([f"%{voiceover.strip().lower()}%", f"%{voiceover.strip().lower()}%"])
+        if ongoing in (True, "true", "1", "ongoing"):
+            conditions.append("is_ongoing = 1")
+        elif ongoing in ("finished", "ended", "complete"):
+            conditions.append("(is_ongoing = 0 OR is_ongoing IS NULL)")
+
+    # Anime-specific filters
+    if category == "anime":
+        if anime_type and anime_type != "all":
+            conditions.append("lower(anime_type) LIKE ?")
+            params.append(f"%{anime_type.strip().lower()}%")
+        if voiceover and voiceover != "all":
+            conditions.append("(lower(voiceover) LIKE ? OR lower(voice_studio) LIKE ?)")
+            params.extend([f"%{voiceover.strip().lower()}%", f"%{voiceover.strip().lower()}%"])
+        if has_subtitles:
+            conditions.append("(has_subtitles = 1 OR lower(subtitles) != '' AND lower(subtitles) != '[]' AND lower(subtitles) != 'нет')")
+
+    # Games-specific filters
+    if category == "games":
+        if repack_author and repack_author != "all":
+            conditions.append("lower(repack_author) LIKE ?")
+            params.append(f"%{repack_author.strip().lower()}%")
+        if release_format and release_format != "all":
+            conditions.append("lower(release_format) LIKE ?")
+            params.append(f"%{release_format.strip().lower()}%")
+        if crack_status and crack_status != "all":
+            conditions.append("lower(crack_status) LIKE ?")
+            params.append(f"%{crack_status.strip().lower()}%")
+
+    # Software-specific filters
+    if category == "software":
+        if software_category and software_category != "all":
+            conditions.append("lower(software_category) LIKE ?")
+            params.append(f"%{software_category.strip().lower()}%")
+        if release_format and release_format != "all":
+            conditions.append("lower(release_format) LIKE ?")
+            params.append(f"%{release_format.strip().lower()}%")
+        if repack_author and repack_author != "all":
+            conditions.append("lower(repack_author) LIKE ?")
+            params.append(f"%{repack_author.strip().lower()}%")
 
     # Search filter (case-insensitive Unicode)
     if search and search.strip():
@@ -465,26 +623,27 @@ def add_to_watchlist(torrent_id):
     if row:
         title_ru = row['title_ru']
         year = row['year']
+        cat = row['category'] or 'movies'
         c.execute("""
             INSERT OR REPLACE INTO watchlist_releases 
             (torrent_id, category, title, title_ru, title_en, year, genre, kp_rating, imdb_rating, poster_url, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            str(torrent_id), row['category'], row['title'], row['title_ru'],
+            str(torrent_id), cat, row['title'], row['title_ru'],
             row['title_en'], row['year'], row['genre'], row['kp_rating'],
             row['imdb_rating'], row['poster_url'], now
         ))
         c.execute("UPDATE releases SET user_status = 'watchlist', updated_at = ? WHERE torrent_id = ?",
                   (now, str(torrent_id)))
-        # Remove from ignored if was there
-        c.execute("DELETE FROM ignored_releases WHERE torrent_id = ? OR (lower(trim(title_ru)) = lower(trim(?)) AND year = ?)",
-                  (str(torrent_id), title_ru, year))
-        # Mark other releases of this same movie
+        # Remove from ignored if was there in this category
+        c.execute("DELETE FROM ignored_releases WHERE torrent_id = ? OR (lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND category = ?)",
+                  (str(torrent_id), title_ru, year, cat))
+        # Mark other releases of this same title in the same category
         if title_ru:
             c.execute("""
                 UPDATE releases SET user_status = 'watchlist_alt', updated_at = ?
-                WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND torrent_id != ?
-            """, (now, title_ru, year, str(torrent_id)))
+                WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND category = ? AND torrent_id != ?
+            """, (now, title_ru, year, cat, str(torrent_id)))
     else:
         c.execute("UPDATE releases SET user_status = 'watchlist', updated_at = ? WHERE torrent_id = ?",
                   (now, str(torrent_id)))
@@ -494,27 +653,43 @@ def add_to_watchlist(torrent_id):
 def remove_from_watchlist(torrent_id):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT title_ru, year FROM releases WHERE torrent_id = ?", (str(torrent_id),))
+    c.execute("SELECT title_ru, year, category FROM releases WHERE torrent_id = ?", (str(torrent_id),))
     row = c.fetchone()
     now = int(time.time())
     c.execute("DELETE FROM watchlist_releases WHERE torrent_id = ?", (str(torrent_id),))
     c.execute("UPDATE releases SET user_status = 'new', updated_at = ? WHERE torrent_id = ?",
               (now, str(torrent_id)))
     if row and row['title_ru']:
-        c.execute("DELETE FROM watchlist_releases WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ?",
-                  (row['title_ru'], row['year']))
+        cat = row['category'] or 'movies'
+        c.execute("DELETE FROM watchlist_releases WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND category = ?",
+                  (row['title_ru'], row['year'], cat))
         c.execute("""
             UPDATE releases SET user_status = 'new', updated_at = ?
-            WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ?
-        """, (now, row['title_ru'], row['year']))
+            WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND category = ?
+        """, (now, row['title_ru'], row['year'], cat))
     conn.commit()
+
+    # Check if this poster is still needed by any other watchlist item
+    c.execute("SELECT 1 FROM watchlist_releases WHERE torrent_id = ?", (str(torrent_id),))
+    still_in_watch = c.fetchone()
     conn.close()
 
-def query_watchlist(search=None, page=1, limit=15):
+    if not still_in_watch:
+        try:
+            poster_path = os.path.join(POSTERS_DIR, f"{torrent_id}.jpg")
+            if os.path.exists(poster_path):
+                os.remove(poster_path)
+        except Exception:
+            pass
+
+def query_watchlist(category=None, search=None, page=1, limit=15):
     conn = get_connection()
     c = conn.cursor()
     conditions = ["user_status = 'watchlist'"]
     params = []
+    if category and category != "all":
+        conditions.append("category = ?")
+        params.append(category)
     if search and search.strip():
         s = f"%{search.strip().lower()}%"
         conditions.append("(lower(title_ru) LIKE ? OR lower(title_en) LIKE ? OR lower(title) LIKE ?)")
@@ -545,25 +720,26 @@ def add_to_ignored(torrent_id):
     if row:
         title_ru = row['title_ru']
         year = row['year']
+        cat = row['category'] or 'movies'
         c.execute("""
             INSERT OR REPLACE INTO ignored_releases 
             (torrent_id, category, title, title_ru, title_en, year, genre, kp_rating, imdb_rating, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            str(torrent_id), row['category'], row['title'], row['title_ru'],
+            str(torrent_id), cat, row['title'], row['title_ru'],
             row['title_en'], row['year'], row['genre'], row['kp_rating'],
             row['imdb_rating'], now
         ))
-        c.execute("DELETE FROM watchlist_releases WHERE torrent_id = ? OR (lower(trim(title_ru)) = lower(trim(?)) AND year = ?)",
-                  (str(torrent_id), title_ru, year))
+        c.execute("DELETE FROM watchlist_releases WHERE torrent_id = ? OR (lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND category = ?)",
+                  (str(torrent_id), title_ru, year, cat))
         # Keep release with status 'ignored' so title search can show status badge
         c.execute("UPDATE releases SET user_status = 'ignored', updated_at = ? WHERE torrent_id = ?",
                   (now, str(torrent_id)))
         if title_ru:
             c.execute("""
                 UPDATE releases SET user_status = 'ignored_alt', updated_at = ?
-                WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND torrent_id != ?
-            """, (now, title_ru, year, str(torrent_id)))
+                WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND category = ? AND torrent_id != ?
+            """, (now, title_ru, year, cat, str(torrent_id)))
         conn.commit()
     conn.close()
 
@@ -571,26 +747,30 @@ def restore_from_ignored(torrent_id):
     conn = get_connection()
     c = conn.cursor()
     c.execute("DELETE FROM ignored_releases WHERE torrent_id = ?", (str(torrent_id),))
-    c.execute("SELECT title_ru, year FROM releases WHERE torrent_id = ?", (str(torrent_id),))
+    c.execute("SELECT title_ru, year, category FROM releases WHERE torrent_id = ?", (str(torrent_id),))
     row = c.fetchone()
     now = int(time.time())
     c.execute("UPDATE releases SET user_status = 'new', updated_at = ? WHERE torrent_id = ?",
               (now, str(torrent_id)))
     if row and row['title_ru']:
-        c.execute("DELETE FROM ignored_releases WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ?",
-                  (row['title_ru'], row['year']))
+        cat = row['category'] or 'movies'
+        c.execute("DELETE FROM ignored_releases WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND category = ?",
+                  (row['title_ru'], row['year'], cat))
         c.execute("""
             UPDATE releases SET user_status = 'new', updated_at = ?
-            WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ?
-        """, (now, row['title_ru'], row['year']))
+            WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND category = ?
+        """, (now, row['title_ru'], row['year'], cat))
     conn.commit()
     conn.close()
 
-def query_ignored(search=None, page=1, limit=15):
+def query_ignored(category=None, search=None, page=1, limit=15):
     conn = get_connection()
     c = conn.cursor()
     conditions = ["1=1"]
     params = []
+    if category and category != "all":
+        conditions.append("category = ?")
+        params.append(category)
     if search and search.strip():
         s = f"%{search.strip()}%"
         conditions.append("(title_ru LIKE ? OR title_en LIKE ? OR title LIKE ?)")
@@ -612,51 +792,125 @@ def query_ignored(search=None, page=1, limit=15):
         "pages": (total + limit - 1) // limit if total > 0 else 1
     }
 
-def is_ignored(torrent_id, title_ru="", year=0):
+def is_ignored(torrent_id, title_ru="", year=0, category=None):
     conn = get_connection()
     c = conn.cursor()
-    # Check by torrent_id
-    c.execute("SELECT 1 FROM ignored_releases WHERE torrent_id = ?", (str(torrent_id),))
+    if category:
+        c.execute("SELECT 1 FROM ignored_releases WHERE torrent_id = ? AND category = ?", (str(torrent_id), category))
+    else:
+        c.execute("SELECT 1 FROM ignored_releases WHERE torrent_id = ?", (str(torrent_id),))
     if c.fetchone():
         conn.close()
         return True
-    # Check by title and year if provided
     if title_ru and year and year > 0:
-        c.execute("SELECT 1 FROM ignored_releases WHERE LOWER(TRIM(title_ru)) = LOWER(TRIM(?)) AND year = ?",
-                  (title_ru, int(year)))
+        if category:
+            c.execute("SELECT 1 FROM ignored_releases WHERE LOWER(TRIM(title_ru)) = LOWER(TRIM(?)) AND year = ? AND category = ?",
+                      (title_ru, int(year), category))
+        else:
+            c.execute("SELECT 1 FROM ignored_releases WHERE LOWER(TRIM(title_ru)) = LOWER(TRIM(?)) AND year = ?",
+                      (title_ru, int(year)))
         if c.fetchone():
             conn.close()
             return True
     conn.close()
     return False
 
-def is_watchlist(torrent_id, title_ru="", year=0):
+def is_watchlist(torrent_id, title_ru="", year=0, category=None):
     conn = get_connection()
     c = conn.cursor()
-    # Check by torrent_id
-    c.execute("SELECT 1 FROM watchlist_releases WHERE torrent_id = ?", (str(torrent_id),))
+    if category:
+        c.execute("SELECT 1 FROM watchlist_releases WHERE torrent_id = ? AND category = ?", (str(torrent_id), category))
+    else:
+        c.execute("SELECT 1 FROM watchlist_releases WHERE torrent_id = ?", (str(torrent_id),))
     if c.fetchone():
         conn.close()
         return True
-    # Check by title and year if provided
     if title_ru and year and year > 0:
-        c.execute("SELECT 1 FROM watchlist_releases WHERE LOWER(TRIM(title_ru)) = LOWER(TRIM(?)) AND year = ?",
-                  (title_ru, int(year)))
+        if category:
+            c.execute("SELECT 1 FROM watchlist_releases WHERE LOWER(TRIM(title_ru)) = LOWER(TRIM(?)) AND year = ? AND category = ?",
+                      (title_ru, int(year), category))
+        else:
+            c.execute("SELECT 1 FROM watchlist_releases WHERE LOWER(TRIM(title_ru)) = LOWER(TRIM(?)) AND year = ?",
+                      (title_ru, int(year)))
         if c.fetchone():
             conn.close()
             return True
     conn.close()
     return False
 
-def get_curation_counts():
+def get_curation_counts(category=None):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT COUNT(DISTINCT lower(trim(title_ru)) || '_' || year) FROM watchlist_releases")
-    w_count = c.fetchone()[0]
-    c.execute("SELECT COUNT(DISTINCT lower(trim(title_ru)) || '_' || year) FROM ignored_releases")
-    i_count = c.fetchone()[0]
+    if category and category != "all":
+        c.execute("SELECT COUNT(DISTINCT lower(trim(title_ru)) || '_' || year) FROM watchlist_releases WHERE category = ?", (category,))
+        w_count = c.fetchone()[0]
+        c.execute("SELECT COUNT(DISTINCT lower(trim(title_ru)) || '_' || year) FROM ignored_releases WHERE category = ?", (category,))
+        i_count = c.fetchone()[0]
+    else:
+        c.execute("SELECT COUNT(DISTINCT lower(trim(title_ru)) || '_' || year) FROM watchlist_releases")
+        w_count = c.fetchone()[0]
+        c.execute("SELECT COUNT(DISTINCT lower(trim(title_ru)) || '_' || year) FROM ignored_releases")
+        i_count = c.fetchone()[0]
     conn.close()
     return {"watchlist": w_count, "ignored": i_count}
+
+def get_all_curation_counts():
+    conn = get_connection()
+    c = conn.cursor()
+    categories = ["movies", "series", "anime", "games", "software"]
+    result = {}
+    for cat in categories:
+        c.execute("SELECT COUNT(DISTINCT lower(trim(title_ru)) || '_' || year) FROM watchlist_releases WHERE category = ?", (cat,))
+        w = c.fetchone()[0]
+        c.execute("SELECT COUNT(DISTINCT lower(trim(title_ru)) || '_' || year) FROM ignored_releases WHERE category = ?", (cat,))
+        i = c.fetchone()[0]
+        result[cat] = {"watchlist": w, "ignored": i}
+    c.execute("SELECT COUNT(DISTINCT lower(trim(title_ru)) || '_' || year) FROM watchlist_releases")
+    tw = c.fetchone()[0]
+    c.execute("SELECT COUNT(DISTINCT lower(trim(title_ru)) || '_' || year) FROM ignored_releases")
+    ti = c.fetchone()[0]
+    result["total"] = {"watchlist": tw, "ignored": ti}
+    conn.close()
+    return result
+
+def cleanup_session_cache():
+    """Two-tier caching policy:
+    1. Releases with user_status = 'new' (or not in watchlist) are purged on app shutdown.
+    2. Items in 'Заинтересовало' (watchlist_releases) persist permanently with their metadata and posters.
+    3. Posters not referenced in watchlist_releases are purged from data/posters/.
+    """
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        # Find all torrent_ids that MUST be preserved
+        c.execute("SELECT torrent_id FROM watchlist_releases")
+        watch_rows = c.fetchall()
+        keep_tids = {str(r[0]) for r in watch_rows if r[0]}
+        
+        # Purge non-watchlist releases from releases table
+        c.execute("""
+            DELETE FROM releases 
+            WHERE user_status NOT IN ('watchlist', 'watchlist_alt')
+              AND torrent_id NOT IN (SELECT torrent_id FROM watchlist_releases)
+        """)
+        conn.commit()
+        conn.isolation_level = None
+        conn.execute("VACUUM")
+        conn.close()
+
+        # Clean posters in data/posters/
+        if os.path.exists(POSTERS_DIR):
+            for fname in os.listdir(POSTERS_DIR):
+                tid = os.path.splitext(fname)[0]
+                if tid not in keep_tids:
+                    fpath = os.path.join(POSTERS_DIR, fname)
+                    try:
+                        os.remove(fpath)
+                    except Exception:
+                        pass
+        return True
+    except Exception:
+        return False
 
 def get_crawl_page(category, year):
     conn = get_connection()
@@ -702,21 +956,44 @@ def get_release_by_id(item_id):
     conn.close()
     return item
 
+ANIME_GENRES = [
+    "Боевик", "Детектив", "Драма", "Исекай", "Комедия", "Меха", "Мистика",
+    "Повседневность", "Приключения", "Романтика", "Сёнэн", "Сёдзё", "Триллер",
+    "Фантастика", "Фэнтези"
+]
+GAME_GENRES = [
+    "Action", "RPG", "Шутер", "Стратегия", "Приключения", "Гонки", "Симулятор",
+    "Спорт", "Хоррор", "Инди", "Файтинг", "Квест"
+]
+SOFTWARE_CATEGORIES = [
+    "Система", "Офис", "Графика", "Мультимедиа", "Безопасность", "Интернет",
+    "Утилиты", "Драйверы", "Аудио", "Видео"
+]
+
 def get_distinct_genres(category="movies"):
     if category in ("movies", "series"):
-        return CORE_GENRES
+        base_genres = set(CORE_GENRES)
+    elif category == "anime":
+        base_genres = set(ANIME_GENRES)
+    elif category == "games":
+        base_genres = set(GAME_GENRES)
+    elif category == "software":
+        base_genres = set(SOFTWARE_CATEGORIES)
+    else:
+        base_genres = set(CORE_GENRES)
+
     conn = get_connection()
     c = conn.cursor()
     c.execute("SELECT genre FROM releases WHERE category = ? AND genre != ''", (category,))
     rows = c.fetchall()
     conn.close()
 
-    genres = set(CORE_GENRES if category in ("movies", "series") else [])
+    genres = set(base_genres)
     for r in rows:
         g_str = r[0]
         for g in re.split(r'[,/|;]+', g_str):
             clean_g = g.strip().capitalize()
-            if clean_g and len(clean_g) > 2:
+            if clean_g and len(clean_g) > 2 and not any(ch.isdigit() for ch in clean_g):
                 genres.add(clean_g)
 
     return sorted(list(genres))
