@@ -614,9 +614,14 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(content)))
             self.end_headers()
             self.wfile.write(content)
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            pass
         except Exception as e:
             log(f"Error reading file {full_path}: {e}", "ERROR")
-            self.send_error(500, "Internal Server Error")
+            try:
+                self.send_error(500, "Internal Server Error")
+            except Exception:
+                pass
 
     def serve_static(self, file_path):
         if not os.path.exists(file_path):
@@ -627,12 +632,15 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         self.serve_file(file_path, mime_type)
 
     def send_json(self, data):
-        content = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(content)))
-        self.end_headers()
-        self.wfile.write(content)
+        try:
+            content = json.dumps(data, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            pass
 
     def log_message(self, format, *args):
         pass
