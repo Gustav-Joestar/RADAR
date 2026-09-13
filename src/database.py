@@ -231,54 +231,55 @@ def init_db():
         conn.commit()
         conn.close()
 
-    # Migration from legacy radar.db if present and not yet migrated
-    if os.path.exists(RADAR_DB) and not os.path.exists(RADAR_DB + ".migrated"):
+    # Migration from legacy radar.db or radar.db.migrated if category databases are empty
+    migrated_src = (RADAR_DB + ".migrated") if os.path.exists(RADAR_DB + ".migrated") else (RADAR_DB if os.path.exists(RADAR_DB) else None)
+    if migrated_src:
         try:
-            r_conn = sqlite3.connect(RADAR_DB)
+            r_conn = sqlite3.connect(migrated_src)
             r_conn.row_factory = sqlite3.Row
             r_cur = r_conn.cursor()
             
             for cat in CATEGORIES:
                 target_conn = get_connection(cat)
                 t_cur = target_conn.cursor()
-                
-                if cat == "movies":
-                    r_cur.execute("SELECT * FROM releases WHERE category IN ('movies', 'nashe_kino') OR category IS NULL")
-                else:
-                    r_cur.execute("SELECT * FROM releases WHERE category = ?", (cat,))
-                rows = [dict(r) for r in r_cur.fetchall()]
-                for row in rows:
-                    cols = [k for k in row.keys() if k != "id"]
-                    placeholders = ", ".join(["?"] * len(cols))
-                    col_str = ", ".join(cols)
-                    t_cur.execute(f"INSERT OR IGNORE INTO releases ({col_str}) VALUES ({placeholders})", [row[c] for c in cols])
-                
-                # Migrate watchlist
-                r_cur.execute("SELECT * FROM watchlist_releases WHERE category = ?", (cat,))
-                w_rows = [dict(r) for r in r_cur.fetchall()]
-                for row in w_rows:
-                    cols = [k for k in row.keys() if k != "id"]
-                    placeholders = ", ".join(["?"] * len(cols))
-                    col_str = ", ".join(cols)
-                    t_cur.execute(f"INSERT OR IGNORE INTO watchlist_releases ({col_str}) VALUES ({placeholders})", [row[c] for c in cols])
-                
-                # Migrate ignored
-                r_cur.execute("SELECT * FROM ignored_releases WHERE category = ?", (cat,))
-                i_rows = [dict(r) for r in r_cur.fetchall()]
-                for row in i_rows:
-                    cols = [k for k in row.keys() if k != "id"]
-                    placeholders = ", ".join(["?"] * len(cols))
-                    col_str = ", ".join(cols)
-                    t_cur.execute(f"INSERT OR IGNORE INTO ignored_releases ({col_str}) VALUES ({placeholders})", [row[c] for c in cols])
-                
-                target_conn.commit()
+                t_cur.execute("SELECT count(*) FROM releases")
+                if t_cur.fetchone()[0] == 0:
+                    if cat == "movies":
+                        r_cur.execute("SELECT * FROM releases WHERE category IN ('movies', 'nashe_kino') OR category IS NULL")
+                    else:
+                        r_cur.execute("SELECT * FROM releases WHERE category = ?", (cat,))
+                    rows = [dict(r) for r in r_cur.fetchall()]
+                    for row in rows:
+                        cols = [k for k in row.keys() if k != "id"]
+                        placeholders = ", ".join(["?"] * len(cols))
+                        col_str = ", ".join(cols)
+                        t_cur.execute(f"INSERT OR IGNORE INTO releases ({col_str}) VALUES ({placeholders})", [row[c] for c in cols])
+                    
+                    # Migrate watchlist if empty
+                    t_cur.execute("SELECT count(*) FROM watchlist_releases")
+                    if t_cur.fetchone()[0] == 0:
+                        r_cur.execute("SELECT * FROM watchlist_releases WHERE category = ?", (cat,))
+                        w_rows = [dict(r) for r in r_cur.fetchall()]
+                        for row in w_rows:
+                            cols = [k for k in row.keys() if k != "id"]
+                            placeholders = ", ".join(["?"] * len(cols))
+                            col_str = ", ".join(cols)
+                            t_cur.execute(f"INSERT OR IGNORE INTO watchlist_releases ({col_str}) VALUES ({placeholders})", [row[c] for c in cols])
+                    
+                    # Migrate ignored if empty
+                    t_cur.execute("SELECT count(*) FROM ignored_releases")
+                    if t_cur.fetchone()[0] == 0:
+                        r_cur.execute("SELECT * FROM ignored_releases WHERE category = ?", (cat,))
+                        i_rows = [dict(r) for r in r_cur.fetchall()]
+                        for row in i_rows:
+                            cols = [k for k in row.keys() if k != "id"]
+                            placeholders = ", ".join(["?"] * len(cols))
+                            col_str = ", ".join(cols)
+                            t_cur.execute(f"INSERT OR IGNORE INTO ignored_releases ({col_str}) VALUES ({placeholders})", [row[c] for c in cols])
+                    
+                    target_conn.commit()
                 target_conn.close()
-                
             r_conn.close()
-            try:
-                os.rename(RADAR_DB, RADAR_DB + ".migrated")
-            except Exception:
-                pass
         except Exception:
             pass
 
@@ -432,29 +433,40 @@ def get_release_by_id(item_id, category=None):
         conn.close()
     return None
 
-def query_season_releases(clean_title, season_num=0):
-    conn = get_connection("series")
+def query_season_releases(clean_title, season_num=0, category="series", is_pack=False):
+    norm_cat = normalize_category(category)
+    conn = get_connection(norm_cat)
     c = conn.cursor()
     clean_k = clean_dedup_key(clean_title, "")
     
-    c.execute("""
+    c.execute(f"""
         SELECT id, torrent_id, category, title, title_ru, title_en, year, date_added, date_ts,
                size_gb, size_str, seeds, peers, quality, voiceover, voice_studio, subtitles,
                has_subtitles, episodes_released, episodes_total, seasons_count, torrent_url,
                magnet_url, streaming_platform
         FROM releases
-        WHERE category = 'series'
+        WHERE category = ?
           AND (
               DEDUP_KEY(COALESCE(NULLIF(title_ru, ''), title), title_en, year) = ?
               OR lower(title_ru) LIKE ?
               OR lower(title) LIKE ?
           )
         ORDER BY episodes_released DESC, seeds DESC, size_gb DESC
-    """, (clean_k, f"%{clean_title.lower()}%", f"%{clean_title.lower()}%"))
+    """, (norm_cat, clean_k, f"%{clean_title.lower()}%", f"%{clean_title.lower()}%"))
     
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     
+    if is_pack:
+        # Multi-season pack releases (e.g. [S01-S02], [1-3 сезоны], [Все сезоны])
+        filtered = []
+        for r in rows:
+            raw_t = (r.get("title") or "").lower()
+            m_range = re.search(r'(?:\[|\()(?:S?\d{1,2}\s*[-–]\s*S?\d{1,2}|(?:сезон[ыа]?|season[s]?)\s*\d{1,2}\s*[-–]\s*\d{1,2}|\d{1,2}\s*[-–]\s*\d{1,2}\s*сезон)', raw_t, re.I)
+            if m_range or re.search(r'все\s+сезоны|полный\s+сезон|антология', raw_t, re.I):
+                filtered.append(r)
+        return filtered
+
     if not season_num or int(season_num) == 0:
         return rows
         
@@ -462,20 +474,29 @@ def query_season_releases(clean_title, season_num=0):
     filtered = []
     for r in rows:
         raw_t = (r.get("title") or "").lower()
-        s_cnt = r.get("seasons_count", 0) or 0
         
+        # 1. Direct season patterns
         patterns = [
+            rf'(?:\[|\()\s*s0?{s_num}(?:[^\d]|$)',
             rf'\bсезон\s*{s_num}\b',
             rf'\b{s_num}\s*сезон\b',
-            rf'\b{s_num:02d}x',
-            rf'\b{s_num}x',
+            rf'(?:\[|\()\s*0?{s_num}x',
             rf'\bs{s_num:02d}\b',
-            rf'\bs{s_num}\b'
+            rf'\[s0?{s_num}\]'
         ]
-        matched = any(re.search(p, raw_t, re.I) for p in patterns)
-        if matched or s_cnt == s_num:
+        matched = any(bool(re.search(p, raw_t, re.I)) for p in patterns)
+        
+        # 2. Check if part of a multi-season range that covers s_num
+        m_range = re.search(r'(?:\[|\()(?:S?(\d{1,2})\s*[-–]\s*S?(\d{1,2})|(?:сезон[ыа]?|season[s]?)\s*(\d{1,2})\s*[-–]\s*(\d{1,2})|(\d{1,2})\s*[-–]\s*(\d{1,2})\s*сезон)', raw_t, re.I)
+        if m_range:
+            start_s = int(m_range.group(1) or m_range.group(3) or m_range.group(5))
+            end_s = int(m_range.group(2) or m_range.group(4) or m_range.group(6))
+            if start_s <= s_num <= end_s:
+                matched = True
+
+        if matched:
             filtered.append(r)
-        elif s_num == 1 and not any(re.search(rf'\b(?:сезон\s*[2-9]|[2-9]\s*сезон|0?[2-9]x|s0?[2-9])\b', raw_t, re.I)):
+        elif s_num == 1 and not bool(re.search(r'(?:\[|\()(?:сезон\s*[2-9]|[2-9]\s*сезон|0?[2-9]x|s0?[2-9])', raw_t, re.I)):
             filtered.append(r)
             
     return filtered
@@ -616,8 +637,12 @@ def query_releases(
     # Anime-specific filters
     if category == "anime":
         if anime_type and anime_type != "all":
-            conditions.append("lower(anime_type) LIKE ?")
-            params.append(f"%{anime_type.strip().lower()}%")
+            a_low = anime_type.strip().lower()
+            if 'тв' in a_low or 'tv' in a_low:
+                conditions.append("(lower(anime_type) LIKE '%тв-сериал%' OR lower(anime_type) LIKE '%tv-сериал%' OR anime_type = '')")
+            else:
+                conditions.append("lower(anime_type) LIKE ?")
+                params.append(f"%{a_low}%")
         if voiceover and voiceover != "all":
             conditions.append("(lower(voiceover) LIKE ? OR lower(voice_studio) LIKE ?)")
             params.extend([f"%{voiceover.strip().lower()}%", f"%{voiceover.strip().lower()}%"])
@@ -627,11 +652,20 @@ def query_releases(
     # Games-specific filters
     if category == "games":
         if repack_author and repack_author != "all":
-            conditions.append("lower(repack_author) LIKE ?")
-            params.append(f"%{repack_author.strip().lower()}%")
+            r_auth = repack_author.strip().lower()
+            conditions.append("(lower(repack_author) LIKE ? OR lower(title) LIKE ?)")
+            params.extend([f"%{r_auth}%", f"%{r_auth}%"])
         if release_format and release_format != "all":
-            conditions.append("lower(release_format) LIKE ?")
-            params.append(f"%{release_format.strip().lower()}%")
+            fmt_l = release_format.strip().lower()
+            if fmt_l == "repack":
+                conditions.append("(lower(release_format) = 'repack' OR lower(title) LIKE '%repack%')")
+            elif fmt_l == "portable":
+                conditions.append("(lower(release_format) = 'portable' OR lower(title) LIKE '%portable%')")
+            elif fmt_l in ("лицензия", "license", "scene"):
+                conditions.append("(lower(release_format) IN ('лицензия', 'license', 'scene') OR lower(title) LIKE '%лицензия%')")
+            else:
+                conditions.append("lower(release_format) LIKE ?")
+                params.append(f"%{fmt_l}%")
         if crack_status and crack_status != "all":
             conditions.append("lower(crack_status) LIKE ?")
             params.append(f"%{crack_status.strip().lower()}%")
@@ -642,11 +676,12 @@ def query_releases(
             conditions.append("lower(software_category) LIKE ?")
             params.append(f"%{software_category.strip().lower()}%")
         if release_format and release_format != "all":
-            conditions.append("lower(release_format) LIKE ?")
-            params.append(f"%{release_format.strip().lower()}%")
+            conditions.append("(lower(release_format) LIKE ? OR lower(title) LIKE ?)")
+            params.extend([f"%{release_format.strip().lower()}%", f"%{release_format.strip().lower()}%"])
         if repack_author and repack_author != "all":
-            conditions.append("lower(repack_author) LIKE ?")
-            params.append(f"%{repack_author.strip().lower()}%")
+            s_auth = repack_author.strip().lower()
+            conditions.append("(lower(repack_author) LIKE ? OR lower(title) LIKE ?)")
+            params.extend([f"%{s_auth}%", f"%{s_auth}%"])
 
     # Search filter (case-insensitive Unicode)
     if search and search.strip():
@@ -801,18 +836,51 @@ def query_watchlist(category=None, search=None, page=1, limit=15):
     for cat in target_cats:
         conn = get_connection(cat)
         c = conn.cursor()
-        conditions = ["user_status = 'watchlist'"]
+        conditions = []
         params = []
         if search and search.strip():
             s = f"%{search.strip().lower()}%"
-            conditions.append("(lower(title_ru) LIKE ? OR lower(title_en) LIKE ? OR lower(title) LIKE ?)")
+            conditions.append("(lower(COALESCE(r.title_ru, w.title_ru)) LIKE ? OR lower(COALESCE(r.title_en, w.title_en)) LIKE ? OR lower(COALESCE(r.title, w.title)) LIKE ?)")
             params.extend([s, s, s])
-        where_clause = " WHERE " + " AND ".join(conditions)
-        c.execute(f"SELECT * FROM releases {where_clause}", params)
+        where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        
+        query = f"""
+            SELECT 
+                w.torrent_id,
+                COALESCE(r.id, w.id) as id,
+                COALESCE(r.category, w.category, '{cat}') as category,
+                COALESCE(r.title, w.title) as title,
+                COALESCE(r.title_ru, w.title_ru) as title_ru,
+                COALESCE(r.title_en, w.title_en) as title_en,
+                COALESCE(r.year, w.year) as year,
+                COALESCE(r.genre, w.genre) as genre,
+                COALESCE(r.poster_url, w.poster_url) as poster_url,
+                COALESCE(r.kp_rating, w.kp_rating, 0.0) as kp_rating,
+                COALESCE(r.imdb_rating, w.imdb_rating, 0.0) as imdb_rating,
+                COALESCE(r.shikimori_rating, 0.0) as shikimori_rating,
+                COALESCE(r.mal_rating, 0.0) as mal_rating,
+                COALESCE(r.size_gb, 0.0) as size_gb,
+                COALESCE(r.size_str, '') as size_str,
+                COALESCE(r.seeds, 0) as seeds,
+                COALESCE(r.peers, 0) as peers,
+                COALESCE(r.quality, '1080p') as quality,
+                COALESCE(r.release_format, '') as release_format,
+                COALESCE(r.repack_author, '') as repack_author,
+                COALESCE(r.torrent_url, '') as torrent_url,
+                COALESCE(r.magnet_url, '') as magnet_url,
+                COALESCE(r.country, '') as country,
+                COALESCE(r.date_added, '') as date_added,
+                'watchlist' as user_status,
+                w.created_at
+            FROM watchlist_releases w
+            LEFT JOIN releases r ON r.torrent_id = w.torrent_id
+            {where_clause}
+        """
+        c.execute(query, params)
         all_items.extend([dict(r) for r in c.fetchall()])
         conn.close()
 
-    all_items.sort(key=lambda x: x.get("updated_at") or 0, reverse=True)
+    all_items.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
     total = len(all_items)
     offset = (page - 1) * limit
     items = all_items[offset:offset + limit]
@@ -968,16 +1036,11 @@ def get_curation_counts(category=None):
         tot_wc += wc
         tot_ic += ic
 
-    if category and category != "all":
-        wc = by_category.get(category, {}).get("watchlist", 0)
-        ic = by_category.get(category, {}).get("ignored", 0)
-    else:
-        wc = tot_wc
-        ic = tot_ic
-
     return {
-        "watchlist": wc,
-        "ignored": ic,
+        "watchlist": tot_wc,
+        "ignored": tot_ic,
+        "category_watchlist": by_category.get(category, {}).get("watchlist", 0) if category else tot_wc,
+        "category_ignored": by_category.get(category, {}).get("ignored", 0) if category else tot_ic,
         "by_category": by_category
     }
 

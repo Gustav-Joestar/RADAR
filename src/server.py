@@ -1,6 +1,7 @@
 import json
 import mimetypes
 import os
+import re
 import sys
 import threading
 import urllib.parse
@@ -24,6 +25,30 @@ STATIC_DIR = os.path.join(PROJECT_ROOT, "static")
 LAST_HEARTBEAT = time.time()
 SHUTDOWN_TIMER = None
 HEARTBEAT_ACTIVE = False
+
+ACTIVE_CRAWLS = {}
+CRAWL_LOCK = threading.Lock()
+
+def start_background_fill(category, year=0):
+    with CRAWL_LOCK:
+        thread = ACTIVE_CRAWLS.get(category)
+        if thread and thread.is_alive():
+            return
+        def worker():
+            log(f"⚡ [ЛАЙВ-ДОБОР] Фоновый поиск дополнительных раздач для [{category}]...", "INFO")
+            for page_idx in range(4):
+                try:
+                    cnt = tracker_engine.scan_next_tracker_page(category, year)
+                    if cnt == 0:
+                        break
+                except Exception as e:
+                    log(f"⚠️ Ошибка фонового сканирования: {e}", "DEBUG")
+                    break
+            log(f"🏁 [ЛАЙВ-ДОБОР] Сканирование трекера для [{category}] завершено", "INFO")
+
+        t = threading.Thread(target=worker, daemon=True)
+        ACTIVE_CRAWLS[category] = t
+        t.start()
 
 def do_shutdown():
     log("🛑 [СЕРВЕР] Окно браузера закрыто пользователем. Очистка сессионного кэша и остановка процесса RADAR...", "INFO")
@@ -90,6 +115,8 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             self.serve_static(file_path)
         elif path == "/api/items":
             self.handle_api_items(params)
+        elif path == "/api/items_poll":
+            self.handle_api_items_poll(params)
         elif path == "/api/cards_status":
             self.handle_api_cards_status(params)
         elif path == "/api/item":
@@ -110,10 +137,7 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             self.send_json(database.query_ignored(category=category, search=search, page=page, limit=limit))
         elif path == "/api/counts":
             category = params.get("category", [None])[0]
-            if category:
-                self.send_json(database.get_curation_counts(category=category))
-            else:
-                self.send_json(database.get_all_curation_counts())
+            self.send_json(database.get_curation_counts(category=category))
         elif path == "/api/logs":
             self.send_json({"logs": get_logs()})
         elif path == "/api/genres":
@@ -260,21 +284,26 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
     def handle_api_series_season_torrents(self, params):
         title = params.get("title", [""])[0].strip()
         season_str = params.get("season", ["1"])[0].strip()
-        season = int(season_str) if season_str.isdigit() else 1
+        is_pack = season_str in ("pack", "packs", "multi")
+        season = int(season_str) if season_str.isdigit() else (0 if is_pack else 1)
         title_en = params.get("title_en", [""])[0].strip()
+        category = params.get("category", ["series"])[0].strip() or "series"
         
-        releases = database.query_season_releases(title, season)
+        releases = database.query_season_releases(title, season, category=category, is_pack=is_pack)
         
-        # If fewer than 2 releases found in local DB, search on tracker on-demand
+        # If fewer than 2 releases found in local DB, search on tracker on-demand for full series
         if len(releases) < 2 and title:
-            search_term = f"{title} сезон {season}"
-            log(f"🔍 [СЕЗОНЫ] Точечный поиск раздач трекера: «{search_term}»...", "INFO")
-            tracker_engine.search_tracker_by_query(search_term, "series")
+            clean_q = re.sub(r'[\'\"`’:\(\)\[\],.]', ' ', title).strip()
+            clean_q = re.sub(r'\s+', ' ', clean_q)
+            log(f"🔍 [СЕЗОНЫ] Поиск всех раздач сериала на трекере: «{clean_q}» в [{category}]...", "INFO")
+            tracker_engine.search_tracker_by_query(clean_q, category)
             if title_en and len(title_en) > 2:
-                tracker_engine.search_tracker_by_query(f"{title_en} season {season}", "series")
-            releases = database.query_season_releases(title, season)
+                clean_en = re.sub(r'[\'\"`’:\(\)\[\],.]', ' ', title_en).strip()
+                clean_en = re.sub(r'\s+', ' ', clean_en)
+                tracker_engine.search_tracker_by_query(clean_en, category)
+            releases = database.query_season_releases(title, season, category=category, is_pack=is_pack)
             
-        self.send_json({"items": releases, "season": season, "title": title})
+        self.send_json({"items": releases, "season": season_str, "title": title, "is_pack": is_pack})
 
     def handle_api_items(self, params):
         category = params.get("category", ["movies"])[0]
@@ -326,9 +355,10 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             crack_status=crack_status, software_category=software_category
         )
 
+        y_scan = int(year) if str(year).isdigit() else 0
+
         # Initial crawl only if category has 0 items in database
         if data["total"] == 0 and not search and page == 1:
-            y_scan = int(year) if str(year).isdigit() else 0
             log(f"📡 [РАДАР] Каталог [{category}] пуст. Запуск первичного сканирования...", "INFO")
             tracker_engine.scan_category(category, y_scan, 1)
             data = database.query_releases(
@@ -342,33 +372,81 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
                 crack_status=crack_status, software_category=software_category
             )
 
-        # In discovery feed without search, ensure requested page is filled up to `limit`
+        needs_fill = False
         if not search and len(data["items"]) < limit:
-            crawl_attempts = 0
-            while len(data["items"]) < limit and crawl_attempts < 4:
-                crawl_attempts += 1
-                y_scan = int(year) if str(year).isdigit() else 0
-                log(f"📡 [РАДАР] Добор релизов трекера для стр. {page} ({len(data['items'])}/{limit})...", "INFO")
-                tracker_engine.scan_next_tracker_page(category, y_scan)
-                data = database.query_releases(
-                    category=category, min_rating=min_rating,
-                    max_size=max_size, qualities=qualities, genre=genre,
-                    year=year, search=search, page=page, limit=limit,
-                    deduplicate=True, origin=origin,
-                    streaming=streaming, voiceover=voiceover, ongoing=ongoing,
-                    has_subtitles=has_subtitles, anime_type=anime_type,
-                    repack_author=repack_author, release_format=release_format,
-                    crack_status=crack_status, software_category=software_category
-                )
+            needs_fill = True
+            start_background_fill(category, y_scan)
 
-        # In discovery mode, tracker always has more pages available for pagination
-        if not search:
-            data["pages"] = max(data["pages"], page + 1)
+        data["needs_fill"] = needs_fill
 
-        # Strict on-demand architecture: full details/descriptions are fetched ONLY when a card is clicked.
+        # Honest pagination
+        if data["total"] <= limit:
+            data["pages"] = 1
+        else:
+            data["pages"] = max(1, (data["total"] + limit - 1) // limit)
+            if not search and len(data["items"]) >= limit and page >= data["pages"]:
+                data["pages"] = page + 1
 
         log(f"✅ [РАДАР] Итого: {data['total']} релизов (выведено {len(data['items'])} на стр. {page})", "SUCCESS")
         self.send_json(data)
+
+    def handle_api_items_poll(self, params):
+        category = params.get("category", ["movies"])[0]
+        min_rating = float(params.get("min_rating", ["0.0"])[0])
+        max_size = float(params.get("max_size", ["999.0"])[0])
+        genre = params.get("genre", ["all"])[0]
+        year = params.get("year", ["all"])[0]
+        search = params.get("search", [""])[0]
+        page = int(params.get("page", ["1"])[0])
+        limit = int(params.get("limit", ["15"])[0])
+        origin = params.get("origin", ["foreign"])[0]
+        qualities = params.get("quality", None)
+        if qualities:
+            qualities = qualities[0].split(",") if isinstance(qualities[0], str) else qualities
+
+        streaming = params.get("streaming", ["all"])[0]
+        voiceover = params.get("voiceover", ["all"])[0]
+        ongoing = params.get("ongoing", ["all"])[0]
+        has_subtitles = params.get("has_subtitles", ["false"])[0].lower() in ("true", "1", "yes")
+        anime_type = params.get("anime_type", ["all"])[0]
+        repack_author = params.get("repack_author", ["all"])[0]
+        release_format = params.get("release_format", ["all"])[0]
+        crack_status = params.get("crack_status", ["all"])[0]
+        software_category = params.get("software_category", ["all"])[0]
+
+        existing_raw = params.get("existing_ids", [""])[0]
+        existing_ids = set([x.strip() for x in existing_raw.split(",") if x.strip()])
+
+        poll_limit = max(limit * 2, 30)
+        data = database.query_releases(
+            category=category, min_rating=min_rating,
+            max_size=max_size, qualities=qualities, genre=genre,
+            year=year, search=search, page=page, limit=poll_limit,
+            deduplicate=True, origin=origin,
+            streaming=streaming, voiceover=voiceover, ongoing=ongoing,
+            has_subtitles=has_subtitles, anime_type=anime_type,
+            repack_author=repack_author, release_format=release_format,
+            crack_status=crack_status, software_category=software_category
+        )
+
+        new_items = [it for it in data["items"] if str(it["torrent_id"]) not in existing_ids]
+
+        with CRAWL_LOCK:
+            t = ACTIVE_CRAWLS.get(category)
+            is_running = t.is_alive() if t else False
+
+        needed = max(0, limit - len(existing_ids))
+        to_return = new_items[:needed]
+        is_done = (len(existing_ids) + len(to_return) >= limit) or (not is_running and len(to_return) == 0)
+
+        total_pages = 1 if data["total"] <= limit else max(1, (data["total"] + limit - 1) // limit)
+
+        self.send_json({
+            "new_items": to_return,
+            "total": data["total"],
+            "pages": total_pages,
+            "done": is_done
+        })
 
     def handle_api_years(self, params):
         category = params.get("category", ["movies"])[0]

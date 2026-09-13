@@ -48,7 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
   ];
 
   const ANIME_TYPES = [
-    'all', 'TV-сериал', 'Полнометражный фильм'
+    'all', 'ТВ-сериал', 'Полнометражный фильм'
   ];
 
   const ANIME_STUDIOS = [
@@ -57,19 +57,15 @@ document.addEventListener('DOMContentLoaded', () => {
   ];
 
   const GAME_REPACKERS = [
-    'all', 'FitGirl', 'DODI', 'Decepticon', 'Choo-Choo', 'ElAmigos', 'GOG', 'Scene / P2P', 'Portable'
+    'all', 'InsaneRamZes', 'FitGirl', 'Canek77', 'Decepticon', 'xatab', 'dixen18', 'SEREGA-LUS', 'Chupacabra', 'Pioneer', 'Лицензия'
   ];
 
   const GAME_FORMATS = [
-    'all', 'RePack', 'Лицензия / Scene', 'Portable', 'Early Access', 'VR'
-  ];
-
-  const GAME_CRACKS = [
-    'all', 'Вшито', 'Не требуется (DRM-Free)', 'Таблетка отдельно'
+    'all', 'RePack', 'Лицензия', 'Portable'
   ];
 
   const GAME_GENRES = [
-    'all', 'RPG', 'Экшен', 'Приключения', 'Стратегия', 'Симулятор', 'Хоррор', 'Шутер', 'Гонки', 'Инди'
+    'all', 'Экшен', 'Приключения', 'Стратегия', 'RPG', 'Симулятор', 'Гонки', 'Спорт', 'Шутер', 'Выживание', 'Инди', 'Открытый мир', 'Хоррор'
   ];
 
   const SOFT_CATEGORIES = [
@@ -78,11 +74,11 @@ document.addEventListener('DOMContentLoaded', () => {
   ];
 
   const SOFT_FORMATS = [
-    'all', 'Установщик (RePack)', 'Портативная (Portable)', 'Образ (ISO)'
+    'all', 'RePack', 'Portable', 'Официальный'
   ];
 
   const SOFT_AUTHORS = [
-    'all', 'KpoJIuK', 'elchupacabra', 'D!akov', 'TryRooM', 'm0nkrus', 'SanLex'
+    'all', 'KpoJIuK', 'm0nkrus', 'elchupacabra', 'Sergei Strelec', 'Andreyonohov', 'D!akov', 'TryRooM', '7997', 'Beloff', 'Centr'
   ];
 
   // DOM Elements
@@ -309,47 +305,6 @@ document.addEventListener('DOMContentLoaded', () => {
           <label class="checkbox-label"><input type="checkbox" id="q-1080p" ${state.qualities.includes('1080p') ? 'checked' : ''} value="1080p">1080p</label>
         </div>
       `;
-    }
-
-    // Row 1 Ratings
-    if (cat === 'movies') {
-      row1 += `
-        <div class="filter-group rating-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="rating-toggle" ${state.min_rating > 0 ? 'checked' : ''}>
-            <span>⭐ Рейтинг &gt; 7.0</span>
-          </label>
-        </div>
-      `;
-    } else if (cat === 'series') {
-      row1 += `
-        <div class="filter-group rating-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="rating-toggle" ${state.min_rating > 0 ? 'checked' : ''}>
-            <span>⭐ Рейтинг &gt; 8.0</span>
-          </label>
-        </div>
-      `;
-    } else if (cat === 'anime') {
-      row1 += `
-        <div class="filter-group rating-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="rating-toggle" ${state.min_rating > 0 ? 'checked' : ''}>
-            <span>⭐ Shiki/MAL &gt; 8.0</span>
-          </label>
-        </div>
-      `;
-    } else if (cat === 'games') {
-      row1 += `
-        <div class="filter-group rating-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="rating-toggle" ${state.min_rating > 0 ? 'checked' : ''}>
-            <span>⭐ Рейтинг &gt; 75 (MC / OC / Steam)</span>
-          </label>
-        </div>
-      `;
-    }
-
     // Row 1 Year & Genre dropdowns
     if (['movies', 'series', 'anime'].includes(cat)) {
       row1 += `
@@ -364,6 +319,10 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     } else if (cat === 'games') {
       row1 += `
+        <div class="filter-group year-group">
+          <label for="year-select">Год:</label>
+          <select id="year-select"><option value="all">Все годы</option></select>
+        </div>
         <div class="filter-group">
           <label for="games-genre-select">Жанр:</label>
           <select id="games-genre-select">
@@ -441,7 +400,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (cat === 'games') {
       row2 = `
         <div class="filter-group">
-          <label for="games-repacker-select">Репакер:</label>
+          <label for="games-repacker-select">Автор:</label>
           <select id="games-repacker-select">
             ${GAME_REPACKERS.map(r => `<option value="${r}" ${state.repack_author === r ? 'selected' : ''}>${r === 'all' ? 'Все авторы' : r}</option>`).join('')}
           </select>
@@ -450,12 +409,6 @@ document.addEventListener('DOMContentLoaded', () => {
           <label for="games-format-select">Формат:</label>
           <select id="games-format-select">
             ${GAME_FORMATS.map(f => `<option value="${f}" ${state.release_format === f ? 'selected' : ''}>${f === 'all' ? 'Все форматы' : f}</option>`).join('')}
-          </select>
-        </div>
-        <div class="filter-group">
-          <label for="games-crack-select">Таблетка:</label>
-          <select id="games-crack-select">
-            ${GAME_CRACKS.map(c => `<option value="${c}" ${state.crack_status === c ? 'selected' : ''}>${c === 'all' ? 'Все статусы' : c}</option>`).join('')}
           </select>
         </div>
       `;
@@ -575,15 +528,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.getElementById('q-4k')?.checked) activeQualities.push('4K');
     state.qualities = activeQualities;
 
-    // Rating
-    const ratingToggle = document.getElementById('rating-toggle');
-    if (ratingToggle) {
-      if (ratingToggle.checked) {
-        state.min_rating = (state.category === 'games') ? 75.0 : ((state.category === 'movies') ? 7.0 : 8.0);
-      } else {
-        state.min_rating = 0.0;
-      }
-    }
+    // Rating filter completely removed per user request
+    state.min_rating = 0.0;
 
     // Russian / Origin
     const russianToggle = document.getElementById('russian-toggle');
@@ -626,7 +572,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (gameFormat) state.release_format = gameFormat.value;
 
     const gameCrack = document.getElementById('games-crack-select');
-    if (gameCrack) state.crack_status = gameCrack.value;
+    state.crack_status = gameCrack ? gameCrack.value : 'all';
 
     // Software
     const softCat = document.getElementById('soft-cat-select');
@@ -695,7 +641,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   function loadYearsAndGenres() {
     const cat = state.category;
-    if (!['movies', 'series', 'anime'].includes(cat)) {
+    if (!['movies', 'series', 'anime', 'games'].includes(cat)) {
       return Promise.resolve();
     }
 
@@ -898,15 +844,15 @@ document.addEventListener('DOMContentLoaded', () => {
     fetch(`/api/items?${params.toString()}`)
       .then(res => res.json())
       .then(data => {
+        stopProgressiveFill();
         renderCards(data.items, false);
-        const isDiscovery = (state.view === 'catalog') && !state.search;
-        state.totalPages = isDiscovery ? Math.max(data.pages || 1, data.page + 1) : (data.pages || 1);
+        state.totalPages = data.pages || 1;
         currentPageSpan.textContent = data.page;
         totalPagesSpan.textContent = state.totalPages;
         resultsCount.textContent = `Найдено на радаре (${catTitle}): ${data.total} (показано ${data.items.length})`;
 
         btnPrev.disabled = data.page <= 1;
-        btnNext.disabled = isDiscovery ? (data.items.length === 0) : (data.page >= state.totalPages);
+        btnNext.disabled = data.page >= state.totalPages;
 
         if (data.total === 0 && data.items.length === 0) {
           cardsGrid.style.display = 'none';
@@ -917,6 +863,11 @@ document.addEventListener('DOMContentLoaded', () => {
           emptyState.style.display = 'none';
         }
         consoleStatusText.textContent = `Каталог [${catTitle}]: ${data.total} релизов (${state.year === 'all' ? 'все годы' : `${state.year} г.`}, стр. ${data.page})`;
+
+        // Live progressive fill: fill page smoothly up to limit (15) without blocking
+        if (data.needs_fill && data.items.length < state.limit && !state.search && state.view === 'catalog') {
+          startProgressiveFill(data.items.map(it => it.torrent_id), params);
+        }
       })
       .catch(err => {
         if (!isSilent) {
@@ -1062,9 +1013,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (item.shikimori_rating > 0) rHtml += `<div class="badge-rating shiki-badge" title="Shikimori">Shiki ${item.shikimori_rating}</div>`;
       if (item.mal_rating > 0) rHtml += `<div class="badge-rating mal-badge" title="MyAnimeList">MAL ${item.mal_rating}</div>`;
     } else if (cat === 'games') {
-      if (item.metacritic_critic > 0) rHtml += `<div class="badge-rating mc-critic-badge" title="Metacritic Critics">MC ${item.metacritic_critic}</div>`;
-      if (item.metacritic_user > 0) rHtml += `<div class="badge-rating mc-user-badge" title="Metacritic Users">MCU ${item.metacritic_user}</div>`;
-      if (item.opencritic_rating > 0) rHtml += `<div class="badge-rating oc-badge" title="OpenCritic">OC ${item.opencritic_rating}</div>`;
+      // User request: No rating badges for games
+      return '';
     } else if (cat === 'software') {
       if (item.app_version) rHtml += `<div class="badge-rating soft-ver-badge" title="Версия ПО">v${escapeHtml(item.app_version)}</div>`;
     } else {
@@ -1132,157 +1082,246 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Cards Rendering
   // -------------------------------------------------------------
+  let progressiveFillTimer = null;
+
+  function stopProgressiveFill() {
+    if (progressiveFillTimer) {
+      clearTimeout(progressiveFillTimer);
+      progressiveFillTimer = null;
+    }
+  }
+
+  function startProgressiveFill(initialIds, baseParams) {
+    stopProgressiveFill();
+    const currentCategory = state.category;
+    const currentPage = state.page;
+    let knownIds = [...initialIds];
+
+    function pollNext() {
+      if (state.category !== currentCategory || state.page !== currentPage || state.view !== 'catalog') {
+        return;
+      }
+      if (knownIds.length >= state.limit) {
+        return;
+      }
+
+      const pollParams = new URLSearchParams(baseParams);
+      pollParams.set('existing_ids', knownIds.join(','));
+
+      fetch(`/api/items_poll?${pollParams.toString()}`)
+        .then(res => res.json())
+        .then(data => {
+          if (state.category !== currentCategory || state.page !== currentPage || state.view !== 'catalog') {
+            return;
+          }
+          if (data.new_items && data.new_items.length > 0) {
+            for (const item of data.new_items) {
+              if (!knownIds.includes(item.torrent_id)) {
+                knownIds.push(item.torrent_id);
+                appendSingleCard(item);
+              }
+              if (knownIds.length >= state.limit) break;
+            }
+            resultsCount.textContent = `Найдено на радаре (${getCategoryTitle(currentCategory)}): ${data.total} (показано ${knownIds.length})`;
+            state.totalPages = data.pages || 1;
+            totalPagesSpan.textContent = state.totalPages;
+          }
+
+          if (!data.done && knownIds.length < state.limit) {
+            progressiveFillTimer = setTimeout(pollNext, 1200);
+          }
+        })
+        .catch(() => {});
+    }
+
+    progressiveFillTimer = setTimeout(pollNext, 1000);
+  }
+
+  function createCardElement(item, isWatchlistView = false) {
+    const card = document.createElement('div');
+    card.className = 'media-card';
+    card.id = `card-${item.torrent_id}`;
+    card.dataset.titleRu = (item.title_ru || '').trim().toLowerCase();
+    card.onclick = () => openModal(item.torrent_id);
+
+    const isSeriesOrAnimeSeries = item.category === 'series' || (item.category === 'anime' && item.anime_type !== 'Полнометражный фильм');
+
+    let displayTitle = item.title_ru || item.title || '';
+    let displayOrig = '';
+    if (isSeriesOrAnimeSeries) {
+      displayTitle = cleanSeriesTitle(item.title, item.title_ru);
+      displayOrig = cleanOrigTitle(item.title_en);
+    }
+
+    const escapedTitle = (displayTitle || item.title_ru || '').replace(/'/g, "\\'");
+    const escapedEn = (item.title_en || '').replace(/'/g, "\\'");
+
+    const posterHtml = item.poster_url 
+      ? `<img class="poster-img poster-loaded" src="${item.poster_url}" alt="${escapeHtml(item.title_ru)}" loading="lazy" onerror="this.onerror=null; repairPoster(this, '${item.torrent_id}', '${escapedTitle}', ${item.year || 0}, '${escapedEn}');"/><div class="poster-placeholder" style="display:none;">🎬</div>`
+      : `<div class="poster-loading skeleton" id="loader-${item.torrent_id}" data-torrent-id="${item.torrent_id}"></div>`;
+
+    let ratingBadges = '';
+    if (item.category !== 'games') {
+      ratingBadges = buildRatingsBadgesHtml(item);
+      if (!ratingBadges && item.category !== 'software') {
+        ratingBadges = `<div class="badge-rating skeleton skeleton-field" title="Определение рейтинга..."></div>`;
+      }
+    }
+
+    // Card Subtitle & Genre/Country
+    let subTitleText = '';
+    if (item.category === 'games') {
+      const auth = item.repack_author;
+      const fmt = item.release_format || 'RePack';
+      if (auth && auth.toLowerCase() !== fmt.toLowerCase()) {
+        subTitleText = `${fmt} от ${auth}`;
+      } else {
+        subTitleText = fmt;
+      }
+      if (item.year) subTitleText += ` · ${item.year}`;
+    } else if (item.category === 'software') {
+      const fmt = item.release_format || 'RePack';
+      const auth = item.repack_author;
+      subTitleText = `${auth ? `${auth} · ` : ''}${fmt}`;
+    } else if (item.category === 'anime') {
+      subTitleText = `${item.title_en ? `${item.title_en} · ` : ''}${item.anime_type ? `${item.anime_type} · ` : ''}${item.year || ''}`;
+    } else {
+      subTitleText = `${item.title_en ? `${item.title_en} · ` : ''}${item.year || ''}`;
+    }
+
+    const hasRealGenre = item.genre && item.genre !== 'Фильм' && item.genre !== 'Сериал';
+    const genreHtml = hasRealGenre
+      ? `<div class="card-genres">${escapeHtml(item.genre)}</div>`
+      : `<div class="card-genres skeleton skeleton-field"></div>`;
+
+    let countryHtml = '';
+    if (item.category === 'movies' || item.category === 'series') {
+      countryHtml = item.country
+        ? formatCountryBadge(item.country)
+        : `<div class="card-country-box skeleton skeleton-field" style="margin-top: 4px;"></div>`;
+    } else if (item.category === 'anime') {
+      const studioBadge = item.voice_studio ? item.voice_studio : (item.has_subtitles ? 'Субтитры' : '');
+      countryHtml = studioBadge ? `<div class="card-country-box"><span class="card-country-text">${escapeHtml(studioBadge)}</span></div>` : '';
+    } else if (item.category === 'games') {
+      const authorText = item.repack_author ? `от ${item.repack_author}` : '';
+      const gameBadgeText = [item.release_format, authorText].filter(Boolean).join(' ');
+      countryHtml = gameBadgeText ? `<div class="card-country-box"><span class="card-country-text">📦 ${escapeHtml(gameBadgeText)}</span></div>` : '';
+    }
+
+    // Status badges
+    let statusBadgeHtml = '';
+    if (item.user_status === 'watchlist' || item.user_status === 'watchlist_alt') {
+      statusBadgeHtml = `<div class="card-status-badge badge-status-watchlist">💚 В списке «Заинтересовало»</div>`;
+    } else if (item.user_status === 'ignored' || item.user_status === 'ignored_alt') {
+      statusBadgeHtml = `<div class="card-status-badge badge-status-ignored">🚫 В списке «Хрень»</div>`;
+    }
+
+    // Quick hover actions
+    let hoverActionsHtml = '';
+    if (isWatchlistView || item.user_status === 'watchlist' || item.user_status === 'watchlist_alt') {
+      hoverActionsHtml = `
+        <div class="card-hover-actions">
+          <button class="btn-card-action btn-card-ignore" onclick="event.stopPropagation(); removeFromWatchlist('${item.torrent_id}')">
+            ✕ Убрать из списка
+          </button>
+        </div>
+      `;
+    } else if (item.user_status === 'ignored' || item.user_status === 'ignored_alt') {
+      hoverActionsHtml = `
+        <div class="card-hover-actions">
+          <button class="btn-card-action btn-card-watch" onclick="event.stopPropagation(); restoreFromIgnored('${item.torrent_id}')">
+            ↩️ Вернуть в радар
+          </button>
+        </div>
+      `;
+    } else {
+      hoverActionsHtml = `
+        <div class="card-hover-actions">
+          <button class="btn-card-action btn-card-watch" onclick="event.stopPropagation(); addToWatchlist('${item.torrent_id}', '${escapedTitle}')">
+            💚 Заинтересовало
+          </button>
+          <button class="btn-card-action btn-card-ignore" onclick="event.stopPropagation(); addToIgnored('${item.torrent_id}', '${escapedTitle}')">
+            🚫 Хрень
+          </button>
+        </div>
+      `;
+    }
+
+    const qualityBadgeText = (item.category === 'games' || item.category === 'software') 
+      ? (item.release_format || 'PC') 
+      : (item.quality || 'HD');
+
+    let metaRowHtml = '';
+    if (isSeriesOrAnimeSeries) {
+      const sCount = item.seasons_count || parseSeasonFromTitle(item.title || item.title_ru);
+      const sStr = formatSeasonsCount(sCount);
+      metaRowHtml = `
+        <div class="card-meta-row card-meta-series" style="margin-bottom: 4px;">
+          <span class="card-seasons-badge" title="Последний вышедший сезон">📺 ${escapeHtml(sStr)}</span>
+          <span class="card-size">${escapeHtml(item.size_str || `${item.size_gb} GB`)}</span>
+        </div>
+        <div class="card-meta-row">
+          <div class="card-peers">
+            <span class="seeds" title="Раздают (сиды)">▲ ${item.seeds}</span>
+            <span class="peers" title="Качают (пиры)">▼ ${item.peers}</span>
+          </div>
+          ${item.date_added ? `<span class="card-series-date" title="Дата выхода / обновления">📅 ${escapeHtml(item.date_added)}</span>` : ''}
+        </div>
+      `;
+    } else {
+      metaRowHtml = `
+        <div class="card-meta-row">
+          <span class="card-size">${escapeHtml(item.size_str || `${item.size_gb} GB`)}</span>
+          <div class="card-peers">
+            <span class="seeds" title="Раздают (сиды)">▲ ${item.seeds}</span>
+            <span class="peers" title="Качают (пиры)">▼ ${item.peers}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    card.innerHTML = `
+      <div class="poster-wrap">
+        ${posterHtml}
+        ${statusBadgeHtml}
+        ${hoverActionsHtml}
+        <div class="badge-quality">${escapeHtml(qualityBadgeText)}</div>
+        ${ratingBadges ? `<div class="card-ratings-wrap">${ratingBadges}</div>` : ''}
+      </div>
+      <div class="card-content">
+        <h3 class="card-title" title="${escapeHtml(item.title)}">${escapeHtml(displayTitle)}</h3>
+        <div class="card-orig">${escapeHtml(displayOrig ? (displayOrig + (item.year ? ' · ' + item.year : '')) : subTitleText)}</div>
+        ${genreHtml}
+        ${countryHtml}
+        ${metaRowHtml}
+      </div>
+    `;
+    return card;
+  }
+
   function renderCards(items, isWatchlistView = false) {
     cardsGrid.innerHTML = '';
     items.forEach(item => {
-      const card = document.createElement('div');
-      card.className = 'media-card';
-      card.id = `card-${item.torrent_id}`;
-      card.dataset.titleRu = (item.title_ru || '').trim().toLowerCase();
-      card.onclick = () => openModal(item.torrent_id);
-
-      const isSeriesOrAnimeSeries = item.category === 'series' || (item.category === 'anime' && item.anime_type !== 'Полнометражный фильм');
-
-      let displayTitle = item.title_ru || item.title || '';
-      let displayOrig = '';
-      if (item.category === 'series' || state.category === 'series') {
-        displayTitle = cleanSeriesTitle(item.title, item.title_ru);
-        displayOrig = cleanOrigTitle(item.title_en);
-      }
-
-      const escapedTitle = (displayTitle || item.title_ru || '').replace(/'/g, "\\'");
-      const escapedEn = (item.title_en || '').replace(/'/g, "\\'");
-
-      const posterHtml = item.poster_url 
-        ? `<img class="poster-img poster-loaded" src="${item.poster_url}" alt="${escapeHtml(item.title_ru)}" loading="lazy" onerror="this.onerror=null; repairPoster(this, '${item.torrent_id}', '${escapedTitle}', ${item.year || 0}, '${escapedEn}');"/><div class="poster-placeholder" style="display:none;">🎬</div>`
-        : `<div class="poster-loading skeleton" id="loader-${item.torrent_id}" data-torrent-id="${item.torrent_id}"></div>`;
-
-      let ratingBadges = buildRatingsBadgesHtml(item);
-      if (!ratingBadges) {
-        ratingBadges = `<div class="badge-rating skeleton skeleton-field" title="Определение рейтинга..."></div>`;
-      }
-
-      // Card Subtitle & Genre/Country
-      let subTitleText = '';
-      if (item.category === 'games') {
-        subTitleText = `${item.repack_author ? `[${item.repack_author}] · ` : ''}${item.release_format || 'RePack'}`;
-      } else if (item.category === 'software') {
-        subTitleText = `${item.repack_author ? `[${item.repack_author}] · ` : ''}${item.software_category || 'ПО'}`;
-      } else if (item.category === 'anime') {
-        subTitleText = `${item.title_en ? `${item.title_en} · ` : ''}${item.anime_type ? `${item.anime_type} · ` : ''}${item.year || ''}`;
-      } else {
-        subTitleText = `${item.title_en ? `${item.title_en} · ` : ''}${item.year || ''}`;
-      }
-
-      const hasRealGenre = item.genre && item.genre !== 'Фильм' && item.genre !== 'Сериал';
-      const genreHtml = hasRealGenre
-        ? `<div class="card-genres">${escapeHtml(item.genre)}</div>`
-        : `<div class="card-genres skeleton skeleton-field"></div>`;
-
-      let countryHtml = '';
-      if (item.category === 'movies' || item.category === 'series') {
-        countryHtml = item.country
-          ? formatCountryBadge(item.country)
-          : `<div class="card-country-box skeleton skeleton-field" style="margin-top: 4px;"></div>`;
-      } else if (item.category === 'anime') {
-        const studioBadge = item.voice_studio ? item.voice_studio : (item.has_subtitles ? 'Субтитры' : '');
-        countryHtml = studioBadge ? `<div class="card-country-box"><span class="card-country-text">${escapeHtml(studioBadge)}</span></div>` : '';
-      } else if (item.category === 'games') {
-        countryHtml = item.crack_status ? `<div class="card-country-box"><span class="card-country-text">${escapeHtml(item.crack_status)}</span></div>` : '';
-      }
-
-      // Status badges
-      let statusBadgeHtml = '';
-      if (item.user_status === 'watchlist' || item.user_status === 'watchlist_alt') {
-        statusBadgeHtml = `<div class="card-status-badge badge-status-watchlist">💚 В списке «Заинтересовало»</div>`;
-      } else if (item.user_status === 'ignored' || item.user_status === 'ignored_alt') {
-        statusBadgeHtml = `<div class="card-status-badge badge-status-ignored">🚫 В списке «Хрень»</div>`;
-      }
-
-      // Quick hover actions
-      let hoverActionsHtml = '';
-      if (isWatchlistView || item.user_status === 'watchlist' || item.user_status === 'watchlist_alt') {
-        hoverActionsHtml = `
-          <div class="card-hover-actions">
-            <button class="btn-card-action btn-card-ignore" onclick="event.stopPropagation(); removeFromWatchlist('${item.torrent_id}')">
-              ✕ Убрать из списка
-            </button>
-          </div>
-        `;
-      } else if (item.user_status === 'ignored' || item.user_status === 'ignored_alt') {
-        hoverActionsHtml = `
-          <div class="card-hover-actions">
-            <button class="btn-card-action btn-card-watch" onclick="event.stopPropagation(); restoreFromIgnored('${item.torrent_id}')">
-              ↩️ Вернуть в радар
-            </button>
-          </div>
-        `;
-      } else {
-        hoverActionsHtml = `
-          <div class="card-hover-actions">
-            <button class="btn-card-action btn-card-watch" onclick="event.stopPropagation(); addToWatchlist('${item.torrent_id}', '${escapedTitle}')">
-              💚 Заинтересовало
-            </button>
-            <button class="btn-card-action btn-card-ignore" onclick="event.stopPropagation(); addToIgnored('${item.torrent_id}', '${escapedTitle}')">
-              🚫 Хрень
-            </button>
-          </div>
-        `;
-      }
-
-      const qualityBadgeText = item.quality || item.release_format || 'HD';
-
-      let metaRowHtml = '';
-      if (isSeriesOrAnimeSeries) {
-        const sCount = item.seasons_count || parseSeasonFromTitle(item.title || item.title_ru);
-        const sStr = formatSeasonsCount(sCount);
-        metaRowHtml = `
-          <div class="card-meta-row card-meta-series" style="margin-bottom: 4px;">
-            <span class="card-seasons-badge" title="Последний вышедший сезон">📺 ${escapeHtml(sStr)}</span>
-            <span class="card-size">${escapeHtml(item.size_str || `${item.size_gb} GB`)}</span>
-          </div>
-          <div class="card-meta-row">
-            <div class="card-peers">
-              <span class="seeds" title="Раздают (сиды)">▲ ${item.seeds}</span>
-              <span class="peers" title="Качают (пиры)">▼ ${item.peers}</span>
-            </div>
-            ${item.date_added ? `<span class="card-series-date" title="Дата выхода / обновления">📅 ${escapeHtml(item.date_added)}</span>` : ''}
-          </div>
-        `;
-      } else {
-        metaRowHtml = `
-          <div class="card-meta-row">
-            <span class="card-size">${escapeHtml(item.size_str || `${item.size_gb} GB`)}</span>
-            <div class="card-peers">
-              <span class="seeds" title="Раздают (сиды)">▲ ${item.seeds}</span>
-              <span class="peers" title="Качают (пиры)">▼ ${item.peers}</span>
-            </div>
-          </div>
-        `;
-      }
-
-      card.innerHTML = `
-        <div class="poster-wrap">
-          ${posterHtml}
-          ${statusBadgeHtml}
-          ${hoverActionsHtml}
-          <div class="badge-quality">${escapeHtml(qualityBadgeText)}</div>
-          <div class="card-ratings-wrap">${ratingBadges}</div>
-        </div>
-        <div class="card-content">
-          <h3 class="card-title" title="${escapeHtml(item.title)}">${escapeHtml(displayTitle)}</h3>
-          <div class="card-orig">${escapeHtml(displayOrig ? (displayOrig + (item.year ? ' · ' + item.year : '')) : subTitleText)}</div>
-          ${genreHtml}
-          ${countryHtml}
-          ${metaRowHtml}
-        </div>
-      `;
+      const card = createCardElement(item, isWatchlistView);
       cardsGrid.appendChild(card);
     });
 
     // Hydrate cards on current page
     const candidateIds = items.map(it => it.torrent_id);
     startCardHydration(candidateIds);
+  }
+
+  function appendSingleCard(item) {
+    const card = createCardElement(item, false);
+    card.style.opacity = '0';
+    card.style.transform = 'translateY(12px)';
+    card.style.transition = 'opacity 0.35s ease, transform 0.35s ease';
+    cardsGrid.appendChild(card);
+    requestAnimationFrame(() => {
+      card.style.opacity = '1';
+      card.style.transform = 'translateY(0)';
+    });
+    startCardHydration([item.torrent_id]);
   }
 
   window.repairPoster = function(imgElem, torrentId, titleRu, year, titleEn) {
@@ -1513,6 +1552,151 @@ document.addEventListener('DOMContentLoaded', () => {
       });
   }
 
+  function getAvailableSeasons(item) {
+    const allTitles = [item.title || ''];
+    if (Array.isArray(item.alternatives)) {
+      item.alternatives.forEach(alt => {
+        if (alt && alt.title) allTitles.push(alt.title);
+      });
+    }
+
+    const singles = new Set();
+    const packs = [];
+    const packLabels = new Set();
+
+    function addPack(label, value) {
+      if (!packLabels.has(label)) {
+        packLabels.add(label);
+        packs.push({ label, value });
+      }
+    }
+
+    allTitles.forEach(t => {
+      if (!t) return;
+      // Multi-season pack patterns, e.g. [S01-S02], [1-3 сезон], 1-2 сезоны
+      const mRange = t.match(/(?:\[|\()(?:S?(\d{1,2})\s*[-–]\s*S?(\d{1,2})|(?:сезон[ыа]?|season[s]?)\s*(\d{1,2})\s*[-–]\s*(\d{1,2})|(\d{1,2})\s*[-–]\s*(\d{1,2})\s*сезон)/i);
+      if (mRange) {
+        const s1 = parseInt(mRange[1] || mRange[3] || mRange[5], 10);
+        const s2 = parseInt(mRange[2] || mRange[4] || mRange[6], 10);
+        if (s1 > 0 && s2 >= s1 && s2 <= 40) {
+          addPack(`📦 Сезоны ${s1}–${s2}`, 'pack');
+          for (let s = s1; s <= s2; s++) singles.add(s);
+        }
+      }
+
+      if (/(?:все\s+сезоны|все\s+серии|полный\s+сезон|антология)/i.test(t)) {
+        addPack('📦 Все сезоны', 'pack');
+      }
+
+      // Single season cues: [S01], S01, 01x, сезон 1, 1 сезон
+      const singleMatches = [
+        ...t.matchAll(/\[S(\d{1,2})\]/gi),
+        ...t.matchAll(/(?:\b|\[)S(\d{1,2})(?:[^\d]|$)/gi),
+        ...t.matchAll(/(?:\b|\[)0?(\d{1,2})x\d+/gi),
+        ...t.matchAll(/(?:\b|\[)сезон\s*(\d{1,2})\b/gi),
+        ...t.matchAll(/\b(\d{1,2})\s*сезон\b/gi)
+      ];
+      for (const m of singleMatches) {
+        const s = parseInt(m[1], 10);
+        if (s >= 1 && s <= 50) singles.add(s);
+      }
+    });
+
+    if (item.seasons_info) {
+      try {
+        const sList = typeof item.seasons_info === 'string' ? JSON.parse(item.seasons_info) : item.seasons_info;
+        if (Array.isArray(sList) && sList.length > 0) {
+          const isDummy5 = sList.length === 5 && sList.every((x, i) => x.season === `Сезон ${i + 1}`);
+          if (!isDummy5) {
+            sList.forEach(sObj => {
+              const m = (sObj.season || '').match(/\d+/);
+              if (m) {
+                const s = parseInt(m[0], 10);
+                if (s >= 1 && s <= 50) singles.add(s);
+              }
+            });
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (singles.size === 0) {
+      const fallbackCount = Math.min(item.seasons_count || 1, 1);
+      singles.add(fallbackCount);
+    }
+
+    // Determine currently active season based on this card's title
+    let activeSeason = 1;
+    let activeIsPack = false;
+    const curTitle = item.title || '';
+    if (/(?:все\s+сезоны|все\s+серии|полный\s+сезон|антология)/i.test(curTitle) ||
+        /(?:\[|\()(?:S?\d{1,2}\s*[-–]\s*S?\d{1,2}|(?:сезон[ыа]?|season[s]?)\s*\d{1,2}\s*[-–]\s*\d{1,2}|\d{1,2}\s*[-–]\s*(\d{1,2})\s*сезон)/i.test(curTitle)) {
+      if (packs.length > 0) {
+        activeIsPack = true;
+      }
+    } else {
+      const mCur = curTitle.match(/\[S(\d{1,2})\]|(?:\b|\[)S(\d{1,2})(?:[^\d]|$)|(?:\b|\[)0?(\d{1,2})x\d+|(?:\b|\[)сезон\s*(\d{1,2})\b|\b(\d{1,2})\s*сезон\b/i);
+      if (mCur) {
+        const detected = parseInt(mCur[1] || mCur[2] || mCur[3] || mCur[4] || mCur[5], 10);
+        if (singles.has(detected)) {
+          activeSeason = detected;
+        } else {
+          singles.add(detected);
+          activeSeason = detected;
+        }
+      } else {
+        const sorted = Array.from(singles).sort((a, b) => a - b);
+        activeSeason = sorted[sorted.length - 1] || 1;
+      }
+    }
+
+    return {
+      singles: Array.from(singles).sort((a, b) => a - b),
+      packs: packs,
+      activeSeason: activeSeason,
+      activeIsPack: activeIsPack
+    };
+  }
+
+  function buildSeasonTabsSectionHtml(seasonsData) {
+    let tabsHtml = '';
+    seasonsData.singles.forEach(sNum => {
+      const isActive = !seasonsData.activeIsPack && sNum === seasonsData.activeSeason;
+      tabsHtml += `
+        <button class="season-tab-btn ${isActive ? 'active' : ''}" data-season="${sNum}" data-is-pack="0">
+          Сезон ${sNum}
+        </button>
+      `;
+    });
+
+    seasonsData.packs.forEach(p => {
+      const isActive = seasonsData.activeIsPack;
+      tabsHtml += `
+        <button class="season-tab-btn ${isActive ? 'active' : ''}" data-season="pack" data-is-pack="1" style="border-color: #8b5cf6; color: #c4b5fd;">
+          ${escapeHtml(p.label)}
+        </button>
+      `;
+    });
+
+    const initLabel = seasonsData.activeIsPack ? 'раздач (паки сезонов)' : `Сезона ${seasonsData.activeSeason}`;
+    return `
+      <div class="season-tabs-section" style="margin-top: 20px;">
+        <h4 style="margin: 0 0 10px 0; color: var(--accent); font-size: 14px; font-weight: 700; letter-spacing: 0.5px;">
+          📺 СЕЗОНЫ И РАЗДАЧИ
+        </h4>
+        <div class="season-tabs-container" id="season-tabs-bar">
+          ${tabsHtml}
+        </div>
+        <div id="season-releases-list" class="season-releases-wrap">
+          <div style="padding: 24px; text-align: center; color: var(--text-muted);">
+            <div class="spinner-neon" style="display: inline-block; margin-bottom: 8px;"></div>
+            <div>Поиск раздач ${initLabel}...</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderModalDetails(item) {
     const category = item.category || state.category;
 
@@ -1646,29 +1830,8 @@ document.addEventListener('DOMContentLoaded', () => {
         ${alternativesSpoilerHtml}
       `;
     } else if (category === 'series') {
-      const cleanSeriesName = cleanSeriesTitle(item.title, item.title_ru);
-      const maxSeason = Math.max(item.seasons_count || 1, 1);
-      
-      const seasonsTabsBlockHtml = `
-        <div class="season-tabs-section" style="margin-top: 20px;">
-          <h4 style="margin: 0 0 10px 0; color: var(--accent); font-size: 14px; font-weight: 700; letter-spacing: 0.5px;">
-            📺 СЕЗОНЫ И РАЗДАЧИ
-          </h4>
-          <div class="season-tabs-container" id="season-tabs-bar">
-            ${Array.from({length: maxSeason}, (_, i) => i + 1).map(sNum => `
-              <button class="season-tab-btn ${sNum === maxSeason ? 'active' : ''}" data-season="${sNum}">
-                Сезон ${sNum}
-              </button>
-            `).join('')}
-          </div>
-          <div id="season-releases-list" class="season-releases-wrap">
-            <div style="padding: 24px; text-align: center; color: var(--text-muted);">
-              <div class="spinner-neon" style="display: inline-block; margin-bottom: 8px;"></div>
-              <div>Поиск раздач Сезона ${maxSeason}...</div>
-            </div>
-          </div>
-        </div>
-      `;
+      const seasonsData = getAvailableSeasons(item);
+      const seasonsTabsBlockHtml = buildSeasonTabsSectionHtml(seasonsData);
 
       spoilersHtml = `
         ${item.description ? `
@@ -1690,6 +1853,13 @@ document.addEventListener('DOMContentLoaded', () => {
         ${seasonsTabsBlockHtml}
       `;
     } else if (category === 'anime') {
+      const isTvAnime = item.anime_type !== 'Полнометражный фильм';
+      let animeTabsHtml = '';
+      if (isTvAnime) {
+        const seasonsData = getAvailableSeasons(item);
+        animeTabsHtml = buildSeasonTabsSectionHtml(seasonsData);
+      }
+
       spoilersHtml = `
         ${item.description ? `
           <details class="modal-spoiler">
@@ -1706,7 +1876,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ${audioSubsBlockHtml}
           </div>
         </details>
-        ${alternativesSpoilerHtml}
+        ${isTvAnime ? animeTabsHtml : alternativesSpoilerHtml}
       `;
     } else if (category === 'games') {
       spoilersHtml = `
@@ -1777,9 +1947,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (item.mal_rating > 0) modalRatingsRowHtml += `<div class="rating-badge-lg mal-badge">MAL: ${item.mal_rating}</div>`;
       if (item.anime_type) modalRatingsRowHtml += `<div class="rating-badge-lg" style="background: var(--bg-card); color: var(--accent); border: 1px solid var(--accent);">${escapeHtml(item.anime_type)}</div>`;
     } else if (category === 'games') {
-      if (item.metacritic_critic > 0) modalRatingsRowHtml += `<div class="rating-badge-lg mc-critic-badge">Metacritic: ${item.metacritic_critic}</div>`;
-      if (item.metacritic_user > 0) modalRatingsRowHtml += `<div class="rating-badge-lg mc-user-badge">Users: ${item.metacritic_user}</div>`;
-      if (item.opencritic_rating > 0) modalRatingsRowHtml += `<div class="rating-badge-lg oc-badge">OpenCritic: ${item.opencritic_rating}</div>`;
+      // User request: No rating badges for games
+      modalRatingsRowHtml = '';
     } else if (category === 'software') {
       if (item.app_version) modalRatingsRowHtml += `<div class="rating-badge-lg soft-ver-badge">Версия: ${escapeHtml(item.app_version)}</div>`;
       if (item.software_category) modalRatingsRowHtml += `<div class="rating-badge-lg" style="background: var(--bg-card); color: #fff; border: 1px solid var(--border-color);">${escapeHtml(item.software_category)}</div>`;
@@ -1789,29 +1958,42 @@ document.addEventListener('DOMContentLoaded', () => {
       if (item.quality) modalRatingsRowHtml += `<div class="rating-badge-lg" style="background: var(--bg-card); border: 1px solid var(--border-color); color: #fff;">${escapeHtml(item.quality)}</div>`;
     }
 
-    // Games Metadata Box
-    let gameMetaBoxHtml = '';
+    // Unified Detail Info Rows (no duplicates)
+    let detailInfoRowsHtml = '';
     if (category === 'games') {
-      const gSteam = item.steam_rating ? `<span class="steam-rating-badge">🎮 Steam: ${escapeHtml(item.steam_rating)}</span>` : '';
-      const gDev = item.developer ? `<div class="game-meta-item">Разработчик:<strong>${escapeHtml(item.developer)}</strong></div>` : '';
-      const gPub = item.publisher ? `<div class="game-meta-item">Издатель:<strong>${escapeHtml(item.publisher)}</strong></div>` : '';
-      const gPlat = item.platform ? `<div class="game-meta-item">Платформа:<strong>${escapeHtml(item.platform)}</strong></div>` : '';
-      const gEng = item.engine ? `<div class="game-meta-item">Движок:<strong>${escapeHtml(item.engine)}</strong></div>` : '';
-      const gDate = item.release_date ? `<div class="game-meta-item">Дата выхода:<strong>${escapeHtml(item.release_date)}</strong></div>` : '';
-
-      if (gDev || gPub || gPlat || gEng || gDate || gSteam) {
-        gameMetaBoxHtml = `
-          <div class="game-metadata-grid">
-            ${gDev}
-            ${gPub}
-            ${gDate}
-            ${gPlat}
-            ${gEng}
-            ${gSteam ? `<div class="game-meta-item">${gSteam}</div>` : ''}
-          </div>
-        `;
-      }
+      if (item.genre) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Жанр:</span><span class="detail-value">${escapeHtml(item.genre)}</span></div>`;
+      const dev = item.developer || item.director;
+      if (dev) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Разработчик:</span><span class="detail-value">${escapeHtml(dev)}</span></div>`;
+      const pub = item.publisher || item.actors;
+      if (pub) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Издатель:</span><span class="detail-value">${escapeHtml(pub)}</span></div>`;
+      const relDate = item.release_date || (item.year ? String(item.year) : '');
+      if (relDate) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Дата выхода:</span><span class="detail-value">${escapeHtml(relDate)}</span></div>`;
+      const fmt = item.release_format || (item.title && item.title.includes('RePack') ? 'RePack' : 'Лицензия');
+      if (fmt) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Тип издания:</span><span class="detail-value">${escapeHtml(fmt)}</span></div>`;
+      if (item.repack_author) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Автор сборки:</span><span class="detail-value">${escapeHtml(item.repack_author)}</span></div>`;
+      if (item.crack_status) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Таблетка:</span><span class="detail-value">${escapeHtml(item.crack_status)}</span></div>`;
+      if (item.platform) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Платформа:</span><span class="detail-value">${escapeHtml(item.platform)}</span></div>`;
+      if (item.engine) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Движок:</span><span class="detail-value">${escapeHtml(item.engine)}</span></div>`;
+      if (item.date_added) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Дата добавления:</span><span class="detail-value">${escapeHtml(item.date_added)}</span></div>`;
+    } else if (category === 'software') {
+      const sCat = item.software_category || item.genre || 'Программы';
+      detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Категория:</span><span class="detail-value">${escapeHtml(sCat)}</span></div>`;
+      if (item.app_version) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Версия:</span><span class="detail-value">${escapeHtml(item.app_version)}</span></div>`;
+      if (item.repack_author) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Автор сборки:</span><span class="detail-value">${escapeHtml(item.repack_author)}</span></div>`;
+      if (item.release_format) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Формат:</span><span class="detail-value">${escapeHtml(item.release_format)}</span></div>`;
+      if (item.date_added) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Дата добавления:</span><span class="detail-value">${escapeHtml(item.date_added)}</span></div>`;
+    } else {
+      if (item.genre) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Жанр / Категория:</span><span class="detail-value">${escapeHtml(item.genre)}</span></div>`;
+      if (item.director) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Режиссёр:</span><span class="detail-value">${escapeHtml(item.director)}</span></div>`;
+      if (item.actors) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">В ролях:</span><span class="detail-value">${escapeHtml(item.actors)}</span></div>`;
+      if (item.country) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Страна / Студия:</span><span class="detail-value">${escapeHtml(item.country)}</span></div>`;
+      if (item.duration) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Хронометраж:</span><span class="detail-value">${escapeHtml(item.duration)}</span></div>`;
+      if (item.date_added) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Дата добавления:</span><span class="detail-value">${escapeHtml(item.date_added)}</span></div>`;
     }
+
+    const isSeriesOrAnimeSeries = category === 'series' || (category === 'anime' && item.anime_type !== 'Полнометражный фильм');
+    const modalDisplayTitle = isSeriesOrAnimeSeries ? cleanSeriesTitle(item.title, item.title_ru) : (item.title_ru || item.title || '');
+    const modalDisplayOrig = isSeriesOrAnimeSeries ? cleanOrigTitle(item.title_en) : (item.title_en || '');
 
     modalContent.innerHTML = `
       <div class="modal-left">
@@ -1854,9 +2036,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       <div class="modal-right">
         <div>
-          <h2 class="modal-title-h2">${escapeHtml(category === 'series' ? cleanSeriesTitle(item.title, item.title_ru) : item.title_ru)}</h2>
+          <h2 class="modal-title-h2">${escapeHtml(modalDisplayTitle)}</h2>
           <div class="modal-orig-sub">
-            ${item.title_en ? `${escapeHtml(cleanOrigTitle(item.title_en))} · ` : ''}${item.year || ''}
+            ${modalDisplayOrig ? `${escapeHtml(modalDisplayOrig)} · ` : ''}${item.year || ''}
           </div>
         </div>
 
@@ -1864,15 +2046,8 @@ document.addEventListener('DOMContentLoaded', () => {
           ${modalRatingsRowHtml}
         </div>
 
-        ${gameMetaBoxHtml}
-
         <div class="detail-info-table">
-          ${item.genre ? `<div class="detail-row"><span class="detail-label">Жанр / Категория:</span><span class="detail-value">${escapeHtml(item.genre)}</span></div>` : ''}
-          ${item.director ? `<div class="detail-row"><span class="detail-label">${category === 'games' ? 'Разработчик:' : 'Режиссёр:'}</span><span class="detail-value">${escapeHtml(item.director)}</span></div>` : ''}
-          ${item.actors ? `<div class="detail-row"><span class="detail-label">${category === 'games' ? 'Издатель:' : 'В ролях:'}</span><span class="detail-value">${escapeHtml(item.actors)}</span></div>` : ''}
-          ${item.country ? `<div class="detail-row"><span class="detail-label">Страна / Студия:</span><span class="detail-value">${escapeHtml(item.country)}</span></div>` : ''}
-          ${item.duration ? `<div class="detail-row"><span class="detail-label">Хронометраж:</span><span class="detail-value">${escapeHtml(item.duration)}</span></div>` : ''}
-          <div class="detail-row"><span class="detail-label">Дата добавления:</span><span class="detail-value">${escapeHtml(item.date_added)}</span></div>
+          ${detailInfoRowsHtml}
         </div>
 
         ${spoilersHtml}
@@ -1892,10 +2067,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }, { once: true });
     }
 
-    // Series Season Tabs setup and on-demand search
-    if (category === 'series') {
+    // Series & Anime Season Tabs setup and on-demand search
+    if (isSeriesOrAnimeSeries) {
       const cleanSeriesName = cleanSeriesTitle(item.title, item.title_ru);
-      const maxSeason = Math.max(item.seasons_count || 1, 1);
+      const seasonsData = getAvailableSeasons(item);
       const tabsBar = modalContent.querySelector('#season-tabs-bar');
       if (tabsBar) {
         const tabBtns = tabsBar.querySelectorAll('.season-tab-btn');
@@ -1903,11 +2078,13 @@ document.addEventListener('DOMContentLoaded', () => {
           btn.addEventListener('click', () => {
             tabBtns.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            const sNum = parseInt(btn.dataset.season) || 1;
-            loadSeasonTorrents(cleanSeriesName, sNum, item.title_en);
+            const isPack = btn.dataset.isPack === '1' || btn.dataset.season === 'pack';
+            const seasonParam = isPack ? 'pack' : (parseInt(btn.dataset.season) || 1);
+            loadSeasonTorrents(cleanSeriesName, seasonParam, item.title_en, category);
           });
         });
-        loadSeasonTorrents(cleanSeriesName, maxSeason, item.title_en);
+        const initialParam = seasonsData.activeIsPack ? 'pack' : seasonsData.activeSeason;
+        loadSeasonTorrents(cleanSeriesName, initialParam, item.title_en, category);
       }
     }
 
@@ -1968,21 +2145,23 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
-  function loadSeasonTorrents(cleanTitle, seasonNum, titleEn) {
+  function loadSeasonTorrents(cleanTitle, seasonNum, titleEn, category = 'series') {
     const container = document.getElementById('season-releases-list');
-    if (!container) return;
+    const isPack = seasonNum === 'pack' || String(seasonNum).toLowerCase().includes('pack');
+    const loadingText = isPack ? 'Поиск раздач (все сезоны / паки)...' : `Поиск раздач Сезона ${seasonNum}...`;
     container.innerHTML = `
       <div style="padding: 24px; text-align: center; color: var(--text-muted);">
         <div class="spinner-neon" style="display: inline-block; margin-bottom: 8px;"></div>
-        <div>Поиск раздач Сезона ${seasonNum}...</div>
+        <div>${loadingText}</div>
       </div>
     `;
 
-    fetch(`/api/series_season_torrents?title=${encodeURIComponent(cleanTitle)}&season=${seasonNum}&title_en=${encodeURIComponent(titleEn || '')}`)
+    fetch(`/api/series_season_torrents?title=${encodeURIComponent(cleanTitle)}&season=${seasonNum}&title_en=${encodeURIComponent(titleEn || '')}&category=${encodeURIComponent(category)}`)
       .then(res => res.json())
       .then(data => {
         if (!data.items || data.items.length === 0) {
-          container.innerHTML = `<div style="padding: 24px; text-align: center; color: var(--text-muted);">Раздачи для Сезона ${seasonNum} не найдены на трекере.</div>`;
+          const emptyText = isPack ? 'Раздачи с паками сезонов не найдены на трекере.' : `Раздачи для Сезона ${seasonNum} не найдены на трекере.`;
+          container.innerHTML = `<div style="padding: 24px; text-align: center; color: var(--text-muted);">${emptyText}</div>`;
           return;
         }
 

@@ -17,7 +17,7 @@ MONTHS = {
 
 CATEGORY_MAP = {
     "movies": [1, 5, 7],     # 1=Зарубежные фильмы, 5=Наши фильмы, 7=Мультипликация
-    "series": [4, 6, 16],    # 4=Зарубежные сериалы, 6=Телевизор, 16=Наши сериалы
+    "series": [4, 16, 6, 7], # 4=Зарубежные сериалы, 16=Наши сериалы, 6=Телевизор, 7=Мультипликация (сериалы)
     "anime": [10],           # 10=Аниме
     "games": [8],            # 8=Игры
     "software": [9]          # 9=Софт (категория 12 - научно-популярные фильмы исключена)
@@ -60,18 +60,21 @@ VOICE_STUDIOS_ANIME = [
 ]
 
 GAME_REPACKERS = [
-    ("fitgirl", "FitGirl"), ("dodi", "DODI"), ("decepticon", "Decepticon"),
-    ("choo-choo", "Choo-Choo"), ("xatab", "xatab"), ("elamigos", "ElAmigos"),
-    ("gog", "GOG"), ("pioneer", "Pioneer"), ("canek77", "Canek77"),
-    ("dixen18", "Dixen18"), ("selezen", "SeleZen"), ("wose", "Wose")
+    ("insaneramzes", "InsaneRamZes"), ("fitgirl", "FitGirl"), ("canek77", "Canek77"),
+    ("decepticon", "Decepticon"), ("xatab", "xatab"), ("dixen18", "dixen18"),
+    ("serega-lus", "SEREGA-LUS"), ("chupacabra", "Chupacabra"), ("elchupacabra", "Chupacabra"),
+    ("pioneer", "Pioneer"), ("sechevik", "Сечевик"), ("igruha", "Igruha"),
+    ("dodi", "DODI"), ("elamigos", "ElAmigos"), ("gog", "GOG"), ("viks", "Viks")
 ]
 
 SOFT_REPACKERS = [
-    ("kprojluk", "KpoJluk"), ("кролик", "KpoJluk"),
-    ("m0nkrus", "m0nkrus"), ("монкрус", "m0nkrus"),
+    ("kprojluk", "KpoJIuK"), ("kpojiuk", "KpoJIuK"), ("krolik", "KpoJIuK"), ("кролик", "KpoJIuK"),
+    ("m0nkrus", "m0nkrus"), ("monkrus", "m0nkrus"), ("монкрус", "m0nkrus"),
     ("elchupacabra", "elchupacabra"), ("чупакабра", "elchupacabra"),
-    ("d!akov", "D!akov"), ("дьяков", "D!akov"),
-    ("tryroom", "TryRooM"), ("sanmini", "SanMini"),
+    ("sergei strelec", "Sergei Strelec"), ("strelec", "Sergei Strelec"),
+    ("andreyonohov", "Andreyonohov"), ("onohov", "Andreyonohov"),
+    ("d!akov", "D!akov"), ("diakov", "D!akov"), ("дьяков", "D!akov"),
+    ("tryroom", "TryRooM"), ("7997", "7997"), ("sanmini", "SanMini"),
     ("beloff", "Beloff"), ("centr", "Centr")
 ]
 
@@ -86,7 +89,8 @@ def is_bad_poster(url):
         'radikal', 'rating', 's.rutor.info', 'imdb/pic', '.gif',
         'thumb', 'preview', '/t/', 'arrowup', 'arrowdown', 'smilies',
         'share', 'button', 'banner', 'logo', 'icon', 'ecx.images-amazon.com',
-        'cdnbunny.org', 'kinopoisk.ru/rating', 'flag', 'rus_flag', 'flag_'
+        'cdnbunny.org', 'kinopoisk.ru/rating', 'flag', 'rus_flag', 'flag_',
+        'kino-teatr', 'kinoteatr', 'header'
     ]):
         return True
     if '/thumb/' in u or '/preview/' in u:
@@ -182,13 +186,14 @@ def is_valid_image_bytes(data):
     return False
 
 def download_image_bytes(poster_url):
-    """Download image, unwrapping anti-hotlinking viewer pages (FastPic etc.) into direct signed image bytes."""
+    """Download image, unwrapping anti-hotlinking viewer pages (FastPic, Imageban etc.) into direct signed image bytes."""
     if not poster_url or not poster_url.startswith(('http://', 'https://')):
         return None
 
-    ref = "https://fastpic.org/" if "fastpic" in poster_url else "http://rutor.info/"
+    ref = "https://fastpic.org/" if "fastpic" in poster_url else ("https://imageban.ru/" if "imageban" in poster_url else "http://rutor.info/")
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         "Referer": ref
     }
 
@@ -198,7 +203,7 @@ def download_image_bytes(poster_url):
             if is_valid_image_bytes(r.content):
                 return r.content
 
-            # FastPic or image host returned an HTML landing/viewer page instead of direct image
+            # FastPic, Imageban or image host returned an HTML landing/viewer page instead of direct image
             if b'<html' in r.content[:300].lower() or b'<!doctype' in r.content[:300].lower():
                 soup = BeautifulSoup(r.text, 'html.parser')
                 signed_candidates = []
@@ -208,14 +213,16 @@ def download_image_bytes(poster_url):
                         continue
                     if src.startswith('//'):
                         src = 'https:' + src
-                    # FastPic signed image contains ?md5=
-                    if '?md5=' in src or im.get('id') == 'image':
+                    if im.get('id') == 'img_main' or 'img_main' in im.get('class', []):
                         signed_candidates.insert(0, src)
-                    elif any(c in im.get('class', []) for c in ['image', 'img-fluid']) and src.startswith('http'):
+                    elif '?md5=' in src or im.get('id') == 'image':
+                        signed_candidates.insert(0, src)
+                    elif any(c in im.get('class', []) for c in ['image', 'img-fluid', 'img-thumbnail']) and src.startswith('http'):
                         signed_candidates.append(src)
 
                 for cand_url in signed_candidates:
-                    r2 = requests.get(cand_url, headers={"User-Agent": headers["User-Agent"], "Referer": "https://fastpic.org/"}, impersonate="chrome124", timeout=8)
+                    c_ref = "https://imageban.ru/" if "imageban" in cand_url else ("https://fastpic.org/" if "fastpic" in cand_url else ref)
+                    r2 = requests.get(cand_url, headers={"User-Agent": headers["User-Agent"], "Accept": headers["Accept"], "Referer": c_ref}, impersonate="chrome124", timeout=8)
                     if r2.status_code == 200 and is_valid_image_bytes(r2.content):
                         return r2.content
 
@@ -224,8 +231,8 @@ def download_image_bytes(poster_url):
 
     return None
 
-def cache_poster_locally(torrent_id, poster_url, min_size_bytes=15360):
-    """Download remote poster and save to data/posters/<torrent_id>.jpg for complete offline autonomy."""
+def cache_poster_locally(torrent_id, poster_url, min_size_bytes=25600):
+    """Download remote poster, validate vertical aspect ratio via Pillow, and save to data/posters/<torrent_id>.jpg."""
     if not poster_url or not torrent_id:
         return ""
     if poster_url.startswith("/posters/"):
@@ -234,17 +241,18 @@ def cache_poster_locally(torrent_id, poster_url, min_size_bytes=15360):
     local_filename = f"{torrent_id}.jpg"
     local_file_path = os.path.join(database.POSTERS_DIR, local_filename)
 
-    # Check if already downloaded and is a VALID image with sufficient size
+    # Check if already downloaded and is a VALID vertical image with sufficient size
     if os.path.exists(local_file_path):
         try:
             sz = os.path.getsize(local_file_path)
-            req_size = min_size_bytes if min_size_bytes > 0 else 15360
+            req_size = min_size_bytes if min_size_bytes > 0 else 25600
             if sz >= req_size:
-                with open(local_file_path, "rb") as f:
-                    head = f.read(64)
-                if is_valid_image_bytes(head):
-                    return f"/posters/{local_filename}"
-            # If too small, invalid, or stub, remove it
+                from PIL import Image
+                with Image.open(local_file_path) as p_img:
+                    # Posters must be portrait: height >= width * 0.95
+                    if p_img.width <= p_img.height * 1.05:
+                        return f"/posters/{local_filename}"
+            # If too small, invalid, or horizontal banner, remove it
             os.remove(local_file_path)
         except Exception:
             pass
@@ -252,9 +260,21 @@ def cache_poster_locally(torrent_id, poster_url, min_size_bytes=15360):
     img_data = download_image_bytes(poster_url)
     if img_data:
         # Strict minimum size validation (reject icons, badges, flags, small banners)
-        if min_size_bytes > 0 and len(img_data) < min_size_bytes:
-            log(f"⚠️ [ПОСТЕР] #{torrent_id}: отклонён {poster_url[:60]}... (размер {round(len(img_data)/1024, 1)} KB < {round(min_size_bytes/1024, 1)} KB)", "DEBUG")
+        req_size = min_size_bytes if min_size_bytes > 0 else 25600
+        if len(img_data) < req_size:
+            log(f"⚠️ [ПОСТЕР] #{torrent_id}: отклонён {poster_url[:60]}... (размер {round(len(img_data)/1024, 1)} KB < {round(req_size/1024, 1)} KB)", "DEBUG")
             return ""
+
+        # Pillow aspect ratio check: strictly reject horizontal banners and screenshots
+        try:
+            from PIL import Image
+            from io import BytesIO
+            with Image.open(BytesIO(img_data)) as pil_img:
+                if pil_img.width > pil_img.height * 1.05:
+                    log(f"⚠️ [ПОСТЕР] #{torrent_id}: отклонён горизонтальный баннер/кадр ({pil_img.width}x{pil_img.height}): {poster_url[:60]}", "DEBUG")
+                    return ""
+        except Exception:
+            pass
 
         try:
             with open(local_file_path, "wb") as f:
@@ -491,7 +511,12 @@ def scan_next_tracker_page(category_name, year=2026):
 def search_tracker_by_query(query, category_name="movies"):
     if not query or not query.strip():
         return 0
-    clean_q = query.strip()
+    # Sanitize search query: replace punctuation (apostrophes, quotes, colons, brackets) with space
+    clean_q = re.sub(r'[\'\"`’:\(\)\[\],.]', ' ', query).strip()
+    clean_q = re.sub(r'\s+', ' ', clean_q)
+    if not clean_q:
+        return 0
+
     query_variants = [clean_q]
     q_e = clean_q.replace('ё', 'е').replace('Ё', 'е')
     q_yo = clean_q.replace('е', 'ё').replace('Е', 'Ё')
@@ -505,7 +530,8 @@ def search_tracker_by_query(query, category_name="movies"):
     for q_var in query_variants:
         encoded_q = urllib.parse.quote(q_var)
         for cat_id in cat_ids:
-            u = f"http://rutor.info/search/0/{cat_id}/0/0/{encoded_q}"
+            # 100/0: method=1 ('все слова') in title (0)
+            u = f"http://rutor.info/search/0/{cat_id}/100/0/{encoded_q}"
             if u not in urls_to_scan:
                 urls_to_scan.append(u)
 
@@ -685,9 +711,8 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                         if kw in t_lower:
                             voice_studio_init = stud
                             break
-                    is_series_cue = bool(re.search(r'\[\s*\d+x|\b\d+\s*сезон|\bсерии?\s*\d+|\b\d+\s*из\s*\d+|s\d+e\d+|\[\d+-\d+\]', raw_title, re.I))
-                    if is_series_cue:
-                        anime_type_init = "ТВ-сериал"
+                    anime_type_init = classify_anime_type(raw_title)
+                    if anime_type_init == "ТВ-сериал":
                         m_multi_s = re.search(r'(?:\[|\()(\d{1,2})-(\d{1,2})\s*сезон', raw_title, re.I)
                         if m_multi_s:
                             seasons_count_init = int(m_multi_s.group(2))
@@ -697,41 +722,35 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                                 seasons_count_init = int(m_single_s.group(1) or m_single_s.group(2) or m_single_s.group(3) or m_single_s.group(4) or 1)
                             else:
                                 seasons_count_init = 1
-                    elif any(w in raw_title.lower() for w in ["фильм", "movie", "полнометраж"]):
-                        anime_type_init = "Полнометражный фильм"
-                        seasons_count_init = 0
                     else:
-                        anime_type_init = "ТВ-сериал"
-                        seasons_count_init = 1
+                        seasons_count_init = 0
 
                 elif category_name == "games":
-                    for kw, auth in GAME_REPACKERS:
-                        if kw in t_lower:
-                            repack_author_init = auth
-                            break
-                    if "repack" in t_lower:
-                        release_format_init = "RePack"
-                    elif "portable" in t_lower:
-                        release_format_init = "Portable"
-                    elif "steam-rip" in t_lower or "steamrip" in t_lower:
-                        release_format_init = "Steam-Rip"
-                    elif "gog" in t_lower:
-                        release_format_init = "GOG"
+                    release_format_init, repack_author_init = extract_game_meta_from_title(raw_title)
 
                 elif category_name == "software":
-                    for kw, auth in SOFT_REPACKERS:
-                        if kw in t_lower:
-                            repack_author_init = auth
-                            break
-                    if "repack" in t_lower and "portable" in t_lower:
-                        release_format_init = "RePack & Portable"
-                    elif "repack" in t_lower:
-                        release_format_init = "RePack"
-                    elif "portable" in t_lower:
-                        release_format_init = "Portable"
-                    m_v = re.search(r'\b(?:v|версия)?\s*(\d+\.\d+(?:\.\d+)*)\b', raw_title, re.I)
-                    if m_v:
-                        app_version_init = m_v.group(1)
+                    release_format_init, repack_author_init, app_version_init = extract_software_meta_from_title(raw_title)
+
+                shiki_init = 0.0
+                mal_init = 0.0
+                kp_init = 0.0
+                imdb_init = 0.0
+                if category_name == "anime":
+                    try:
+                        shiki_res = fetch_shikimori_rating(title_ru, title_en)
+                        if shiki_res and shiki_res[0] > 0:
+                            shiki_init = shiki_res[0]
+                            mal_init = shiki_res[1]
+                    except Exception:
+                        pass
+                elif category_name in ("movies", "series"):
+                    try:
+                        kp_res = fetch_ratings_by_search(title_ru, title_en, rel_year)
+                        if kp_res:
+                            kp_init = kp_res[0] or 0.0
+                            imdb_init = kp_res[1] or 0.0
+                    except Exception:
+                        pass
 
                 item_data = {
                     "torrent_id": torrent_id,
@@ -758,8 +777,8 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     "description": "",
                     "country": detected_country,
                     "duration": "",
-                    "imdb_rating": 0.0,
-                    "kp_rating": 0.0,
+                    "imdb_rating": imdb_init,
+                    "kp_rating": kp_init,
                     "poster_url": "",
                     "torrent_url": f"http://d.rutor.info/download/{torrent_id}",
                     "magnet_url": f"magnet:?xt=urn:btih:&dn={urllib.parse.quote(raw_title)}",
@@ -777,8 +796,8 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     "crack_status": "",
                     "app_version": app_version_init,
                     "screenshots_json": "[]",
-                    "shikimori_rating": 0.0,
-                    "mal_rating": 0.0,
+                    "shikimori_rating": shiki_init,
+                    "mal_rating": mal_init,
                     "metacritic_critic": 0.0,
                     "metacritic_user": 0.0,
                     "opencritic_rating": 0.0,
@@ -817,12 +836,187 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
     log(f"Категория [{category_name}] полностью актуализирована!", "SUCCESS")
     return len(scanned_torrent_ids)
 
+def extract_duration_minutes(dur_str):
+    """Parse duration string into integer minutes, handling HH:MM:SS, MM:SS, and multi-episode formats."""
+    if not dur_str:
+        return 0
+    # 1. HH:MM:SS format (e.g. 02:34:55, 01:45:00, ~ 00:25:00)
+    m_hms = re.search(r'(\d{1,2}):(\d{2}):(\d{2})', dur_str)
+    if m_hms:
+        h = int(m_hms.group(1))
+        m = int(m_hms.group(2))
+        return h * 60 + m
+    # 2. X ч. Y мин. format (e.g. 1 ч. 50 мин., 2 часа)
+    m_h = re.search(r'(\d+)\s*ч(?:ас(?:а|ов)?)?(?:\s*(\d+)\s*мин)?', dur_str, re.I)
+    if m_h:
+        return int(m_h.group(1)) * 60 + int(m_h.group(2) or 0)
+    # 3. MM:SS format (e.g. 25:00, 58:00)
+    m_col = re.search(r'(\d{1,2}):(\d{2})', dur_str)
+    if m_col:
+        return int(m_col.group(1))
+    # 4. X мин. format (e.g. 24 мин., 115 мин.)
+    m_min = re.search(r'(\d+)\s*мин', dur_str, re.I)
+    if m_min:
+        return int(m_min.group(1))
+    return 0
+
+def classify_anime_type(raw_title, duration_str="", full_text=""):
+    """Accurately classify Anime: TV series vs Full-length movie based on duration and series markers."""
+    t_lower = (raw_title or "").lower()
+    d_lower = (duration_str or "").lower()
+    f_lower = (full_text or "").lower()
+
+    # 1. Detect explicit series cues in title
+    series_title_pattern = (
+        r'\[\s*s\d+|(?:\b|\[)s\d+(?:[^\d]|$)|\[\s*\d+x|\b\d+\s*сезон|\bсерии?\s*\d+|'
+        r'\b\d+\s*из\s*\d+|s\d+e\d+|\[\d+-\d+\]|\bтв-сериал\b|\bсериал\b|\bтв\b|\btv\b'
+    )
+    if bool(re.search(series_title_pattern, t_lower, re.I)):
+        return "ТВ-сериал"
+
+    # 2. Detect explicit series cues in duration (e.g. "~ 00:25:00 (серия)", "11 х ~ 00:24:00", "12 x 00:58:00")
+    series_dur_pattern = r'(?:сери[яий]|эпизод|\bх\s*~|\bx\s*~|\*\s*~|\b\d+\s*(?:х|x|\*)\s*\d+)'
+    if bool(re.search(series_dur_pattern, d_lower, re.I)):
+        return "ТВ-сериал"
+
+    # 3. Detect movie cues in title (e.g. "фильм", "movie", "the movie", "полнометраж")
+    # But only if it does not have multi-episode cues
+    is_movie_title = bool(re.search(r'\b(?:фильм|movie|the movie|полнометраж)\b', t_lower, re.I))
+    if is_movie_title and not re.search(r'\[\d+-\d+\]|\d+\s*из\s*\d+', t_lower):
+        return "Полнометражный фильм"
+
+    # 4. Check duration in minutes
+    dur_min = extract_duration_minutes(duration_str)
+    if dur_min > 60:
+        # Long single video > 60 min (e.g. 90-150 min) without series indicators is a movie
+        return "Полнометражный фильм"
+
+    # 5. Default: Anime standard is 24-25 min TV series
+    return "ТВ-сериал"
+
+def extract_game_meta_from_title(raw_title):
+    """Extract format and repack author after pipe '|' for games with strict rules."""
+    t_lower = raw_title.lower()
+    after_pipe = raw_title.split('|')[-1].strip() if '|' in raw_title else ''
+    after_pipe_lower = after_pipe.lower()
+
+    author = ""
+    # 1. Look for known author, preferring after pipe
+    for kw, name in GAME_REPACKERS:
+        if kw in after_pipe_lower:
+            author = name
+            break
+    if not author:
+        for kw, name in GAME_REPACKERS:
+            if kw in t_lower:
+                author = name
+                break
+
+    # 2. Regex fallback after pipe: 'от <Author>' or 'by <Author>'
+    if not author and after_pipe:
+        m_auth = re.search(r'(?:от|by)\s+([a-zA-Z0-9_\-\.!]+)', after_pipe, re.I)
+        if m_auth:
+            cand = m_auth.group(1).strip()
+            if cand.lower() not in ('fitgirl', 'insaneramzes'):
+                author = cand
+
+    # 3. Format detection with strict rules:
+    # Rule A: InsaneRamZes is ALWAYS Portable
+    if author == "InsaneRamZes":
+        fmt = "Portable"
+    # Rule B: FitGirl is ALWAYS RePack
+    elif author == "FitGirl":
+        fmt = "RePack"
+    elif "portable" in t_lower or "portable" in after_pipe_lower:
+        fmt = "Portable"
+    elif "repack" in t_lower or "repack" in after_pipe_lower:
+        fmt = "RePack"
+    elif any(k in t_lower for k in ["лицензия", "gog", "steam-rip", "steamrip", "scene"]):
+        fmt = "Лицензия"
+    else:
+        fmt = "Лицензия" if not author else "RePack"
+
+    if not author and fmt == "Лицензия":
+        author = "Лицензия"
+
+    return fmt, author
+
+def extract_software_meta_from_title(raw_title):
+    """Extract format, author, and version for software."""
+    t_lower = raw_title.lower()
+    author = ""
+    for kw, name in SOFT_REPACKERS:
+        if kw in t_lower:
+            author = name
+            break
+    
+    fmt = "Официальный"
+    if "repack" in t_lower and "portable" in t_lower:
+        fmt = "RePack & Portable"
+    elif "repack" in t_lower:
+        fmt = "RePack"
+    elif "portable" in t_lower:
+        fmt = "Portable"
+
+    version = ""
+    m_v = re.search(r'\b(?:v|версия)?\s*(\d+\.\d+(?:\.\d+)*)\b', raw_title, re.I)
+    if m_v:
+        version = m_v.group(1)
+
+    return fmt, author, version
+
+def parse_related_seasons(details_table, current_title):
+    """Parse 'Связанные раздачи' on Rutor torrent page and extract real season numbers."""
+    titles = [current_title]
+    if details_table:
+        root = details_table.find_parent('body') or details_table.find_parent('html') or details_table
+        if root:
+            for fs in root.find_all('fieldset'):
+                legend = fs.find('legend')
+                if legend and 'Связанные' in legend.get_text():
+                    for a in fs.find_all('a', href=re.compile(r'/torrent/\d+')):
+                        t_text = a.get_text().strip()
+                        if t_text:
+                            titles.append(t_text)
+                    break
+
+    detected_seasons = set()
+    for t in titles:
+        m_range = re.search(r'\[S?(\d{1,2})\s*[-–]\s*S?(\d{1,2})\]|(?:сезон[ыа]?|season[s]?)\s*(\d{1,2})\s*[-–]\s*(\d{1,2})|(\d{1,2})\s*[-–]\s*(\d{1,2})\s*сезон', t, re.I)
+        if m_range:
+            start_s = int(m_range.group(1) or m_range.group(3) or m_range.group(5))
+            end_s = int(m_range.group(2) or m_range.group(4) or m_range.group(6))
+            for s in range(start_s, min(end_s + 1, 50)):
+                detected_seasons.add(s)
+            continue
+
+        m_single = re.search(r'\[S(\d{1,2})\]|(?:\b|\[)S(\d{1,2})(?:[^\d]|$)|(?:\b|\[)0?(\d{1,2})x|(?:\b|\[)Сезон\s*(\d{1,2})\b', t, re.I)
+        if m_single:
+            s_num = int(m_single.group(1) or m_single.group(2) or m_single.group(3) or m_single.group(4))
+            detected_seasons.add(s_num)
+
+    if not detected_seasons:
+        detected_seasons.add(1)
+
+    clean_title = current_title.split('/')[0].split('(')[0].split('[')[0].strip()
+    clean_title = re.sub(r'[\'\"`’:\(\)\[\],.]', ' ', clean_title).strip()
+    clean_title = re.sub(r'\s+', ' ', clean_title)
+
+    seasons_info = []
+    for s_num in sorted(detected_seasons):
+        seasons_info.append({
+            "season": f"Сезон {s_num}",
+            "search_query": f"{clean_title} S{s_num:02d}"
+        })
+    return seasons_info, len(detected_seasons)
+
 STOP_METADATA_FIELDS = (
     r'Страна|Студия|Производство|Выпущено|Премьера|Мировая премьера|Премьера в РФ|'
     r'Возраст|Рейтинг MPAA|Бюджет|Сборы|Время|Продолжительность|Качество|Качество видео|'
     r'Формат|Видео|Видеокодек|Кодек|Аудио|Аудиокодек|Звук|Перевод|Озвучивание|Озвучка|'
     r'Субтитры|Режиссер|Режиссёр|В ролях|Актеры|Файл|Релиз|Технические|MediaInfo|'
-    r'Скриншоты|Рип от|Внимание'
+    r'Скриншоты|Рип от|Внимание|Тип релиза|Контейнер|Сэмпл|Источник|Исходник|Локализация|'
+    r'Вид релиза|Группа|Релиз-группа'
 )
 
 STOP_GAME_FIELDS = (
@@ -842,24 +1036,18 @@ def clean_description(text, cat="movies"):
     if not text or not isinstance(text, str):
         return ""
     desc = text.strip()
+    
     if cat == "games":
-        parts = re.split(r'(?:\n|\r|\s{2,})(?:' + STOP_GAME_FIELDS + r')\s*:?', desc, flags=re.I)
-        if parts:
-            desc = parts[0].strip()
+        stop_pattern = f"{STOP_METADATA_FIELDS}|{STOP_GAME_FIELDS}"
     elif cat == "software":
-        parts = re.split(r'(?:\n|\r|\s{2,})(?:' + STOP_SOFTWARE_FIELDS + r')\s*:?', desc, flags=re.I)
-        if parts:
-            desc = parts[0].strip()
-    elif cat == "anime":
-        parts = re.split(rf'(?:\n|\r|\s{{2,}})(?:{STOP_METADATA_FIELDS})\s*:', desc, flags=re.IGNORECASE)
-        if parts:
-            desc = parts[0].strip()
-        desc = re.sub(rf'\s*(?:{STOP_METADATA_FIELDS})\s*:[^\n\r]+', '', desc, flags=re.IGNORECASE).strip()
+        stop_pattern = f"{STOP_METADATA_FIELDS}|{STOP_SOFTWARE_FIELDS}"
     else:
-        parts = re.split(rf'(?:\n|\r|\s{{2,}})(?:{STOP_METADATA_FIELDS})\s*:', desc, flags=re.IGNORECASE)
-        if parts:
-            desc = parts[0].strip()
-        desc = re.sub(rf'\s*(?:{STOP_METADATA_FIELDS})\s*:[^\n\r]+', '', desc, flags=re.IGNORECASE).strip()
+        stop_pattern = f"{STOP_METADATA_FIELDS}|{STOP_GAME_FIELDS}|{STOP_SOFTWARE_FIELDS}"
+
+    parts = re.split(rf'(?:\.|\n|\r|\s{{2,}})\s*(?:{stop_pattern})\s*:?', desc, flags=re.IGNORECASE)
+    if parts:
+        desc = parts[0].strip()
+    desc = re.sub(rf'\s*(?:{stop_pattern})\s*:[^\n\r]+', '', desc, flags=re.IGNORECASE).strip()
     return desc
 
 
@@ -1253,35 +1441,21 @@ def parse_full_details(torrent_id):
 
         # Category-specific description extraction with strict stop-words
         if cat == "games":
-            desc_m = re.search(r'Описание:\s*\n*(.*?)(?=\n\s*(?:' + STOP_GAME_FIELDS + r')\s*:?|\Z)', full_text, re.DOTALL | re.I)
+            desc_m = re.search(r'Описание:\s*\n*(.*?)(?=\n\s*(?:' + STOP_GAME_FIELDS + r'|' + STOP_METADATA_FIELDS + r')\s*:?|\Z)', full_text, re.DOTALL | re.I)
             description = desc_m.group(1).strip() if desc_m else ""
-            if description:
-                parts = re.split(r'(?:\n|\r|\s{2,})(?:' + STOP_GAME_FIELDS + r')\s*:?', description, flags=re.I)
-                if parts:
-                    description = parts[0].strip()
+            description = clean_description(description, cat="games")
         elif cat == "software":
-            desc_m = re.search(r'Описание:\s*\n*(.*?)(?=\n\s*(?:' + STOP_SOFTWARE_FIELDS + r')\s*:?|\Z)', full_text, re.DOTALL | re.I)
+            desc_m = re.search(r'Описание:\s*\n*(.*?)(?=\n\s*(?:' + STOP_SOFTWARE_FIELDS + r'|' + STOP_METADATA_FIELDS + r')\s*:?|\Z)', full_text, re.DOTALL | re.I)
             description = desc_m.group(1).strip() if desc_m else ""
-            if description:
-                parts = re.split(r'(?:\n|\r|\s{2,})(?:' + STOP_SOFTWARE_FIELDS + r')\s*:?', description, flags=re.I)
-                if parts:
-                    description = parts[0].strip()
+            description = clean_description(description, cat="software")
         elif cat == "anime":
-            desc_m = re.search(rf'(?:Описание|О фильме|Сюжет):\s*\n*(.*?)(?=\n\s*(?:{STOP_METADATA_FIELDS})\s*:|\Z)', full_text, re.DOTALL | re.I)
+            desc_m = re.search(rf'(?:Описание|О фильме|Сюжет):\s*\n*(.*?)(?=\n\s*(?:{STOP_METADATA_FIELDS})\s*:?|\Z)', full_text, re.DOTALL | re.I)
             description = desc_m.group(1).strip() if desc_m else ""
-            if description:
-                parts = re.split(rf'(?:\n|\r|\s{{2,}})(?:{STOP_METADATA_FIELDS})\s*:', description, flags=re.IGNORECASE)
-                if parts:
-                    description = parts[0].strip()
-                description = re.sub(rf'\s*(?:{STOP_METADATA_FIELDS})\s*:[^\n\r]+', '', description, flags=re.IGNORECASE).strip()
+            description = clean_description(description, cat="anime")
         else:
-            desc_m = re.search(rf'(?:О фильме|Описание сериала|Описание|Сюжет|О сериале):\s*\n*(.*?)(?=\n\s*(?:{STOP_METADATA_FIELDS})\s*:|\Z)', full_text, re.DOTALL | re.I)
+            desc_m = re.search(rf'(?:О фильме|Описание сериала|Описание|Сюжет|О сериале):\s*\n*(.*?)(?=\n\s*(?:{STOP_METADATA_FIELDS})\s*:?|\Z)', full_text, re.DOTALL | re.I)
             description = desc_m.group(1).strip() if desc_m else ""
-            if description:
-                parts = re.split(rf'(?:\n|\r|\s{{2,}})(?:{STOP_METADATA_FIELDS})\s*:', description, flags=re.IGNORECASE)
-                if parts:
-                    description = parts[0].strip()
-                description = re.sub(rf'\s*(?:{STOP_METADATA_FIELDS})\s*:[^\n\r]+', '', description, flags=re.IGNORECASE).strip()
+            description = clean_description(description, cat=cat)
 
 
         # 1. Fetch ratings from Kinopoisk XML (ultra-fast 0.16s via rating.kinopoisk.ru)
@@ -1348,14 +1522,12 @@ def parse_full_details(torrent_id):
             if not kp_id and s_kpid:
                 kp_id = s_kpid
 
-        # Season links for series
+        # Season links for series & anime TV
         seasons_info = []
-        if any(w in raw_title.lower() for w in ['сезон', 'серии', 's0']):
-            for s_num in range(1, 6):
-                seasons_info.append({
-                    "season": f"Сезон {s_num}",
-                    "search_query": f"{title_clean} Сезон {s_num}"
-                })
+        seasons_detected_cnt = 0
+        cat_for_seasons = existing.get("category") if existing else ""
+        if cat_for_seasons in ("series", "anime") or any(w in raw_title.lower() for w in ['сезон', 'серии', 's0', 's1', 's2']):
+            seasons_info, seasons_detected_cnt = parse_related_seasons(details_table, raw_title)
 
         mediainfo = ""
         mi_m = re.search(r'(MediaInfo:?.*)', full_text, re.DOTALL | re.IGNORECASE)
@@ -1452,14 +1624,8 @@ def parse_full_details(torrent_id):
                     if kw in f_lower:
                         voice_stud = stud
                         break
-                raw_t = update_data.get("title", "")
-                is_series_cue = bool(re.search(r'\[\s*\d+x|\b\d+\s*сезон|\bсерии?\s*\d+|\b\d+\s*из\s*\d+|s\d+e\d+|\[\d+-\d+\]', raw_t, re.I))
-                if is_series_cue:
-                    anime_type_val = "ТВ-сериал"
-                elif any(w in raw_t.lower() for w in ["фильм", "movie", "полнометраж"]):
-                    anime_type_val = "Полнометражный фильм"
-                else:
-                    anime_type_val = "ТВ-сериал"
+                raw_t = update_data.get("title", "") or raw_title
+                anime_type_val = classify_anime_type(raw_t, duration, full_text)
                 shikimori_score, mal_score = fetch_shikimori_rating(t_ru, t_en)
 
             elif cat == "games":
@@ -1572,7 +1738,7 @@ def parse_full_details(torrent_id):
                 "is_ongoing": is_ong_val,
                 "episodes_released": ep_rel_val,
                 "episodes_total": ep_tot_val,
-                "seasons_count": max(len(seasons_info) if seasons_info else 0, update_data.get("seasons_count", 0)),
+                "seasons_count": seasons_detected_cnt if seasons_detected_cnt > 0 else (len(seasons_info) if seasons_info else 1),
                 "has_subtitles": 1 if (subtitles_list or subtitles_str_fallback) else 0,
                 "date_added": date_added_full or update_data.get("date_added", ""),
                 "date_ts": date_ts_full or update_data.get("date_ts", 0)
