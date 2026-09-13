@@ -105,6 +105,39 @@ document.addEventListener('DOMContentLoaded', () => {
   const debugConsole = document.getElementById('debug-console');
   const progressFill = document.getElementById('progress-fill');
 
+  let progressTimer = null;
+  function startLoadingProgress() {
+    if (!progressBar || !progressFill) return;
+    if (progressTimer) clearInterval(progressTimer);
+    progressBar.classList.add('active');
+    progressBar.style.opacity = '1';
+    let currentWidth = 15;
+    progressFill.style.width = `${currentWidth}%`;
+    progressTimer = setInterval(() => {
+      if (currentWidth < 85) {
+        currentWidth += Math.random() * 8 + 4;
+        if (currentWidth > 85) currentWidth = 85;
+        progressFill.style.width = `${currentWidth}%`;
+      }
+    }, 180);
+  }
+
+  function finishLoadingProgress() {
+    if (!progressBar || !progressFill) return;
+    if (progressTimer) {
+      clearInterval(progressTimer);
+      progressTimer = null;
+    }
+    progressFill.style.width = '100%';
+    setTimeout(() => {
+      progressBar.style.opacity = '0';
+      setTimeout(() => {
+        progressBar.classList.remove('active');
+        progressFill.style.width = '0%';
+      }, 350);
+    }, 200);
+  }
+
   function getCategoryTitle(cat) {
     const map = {
       movies: 'Фильмы',
@@ -284,6 +317,18 @@ document.addEventListener('DOMContentLoaded', () => {
       <button id="btn-apply-filters" class="btn-primary btn-apply" title="Применить выбранные фильтры и найти релизы">🔍 Найти</button>
     `;
 
+    // Row 1 Movies: Place 'Русское' right after 'Найти' button
+    if (cat === 'movies') {
+      row1 += `
+        <div class="filter-group russian-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="russian-toggle" ${state.origin === 'russian' ? 'checked' : ''}>
+            <span>Русское</span>
+          </label>
+        </div>
+      `;
+    }
+
     // Row 1 Qualities
     if (cat === 'movies') {
       row1 += `
@@ -342,22 +387,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Build Row 2: Category-specific controls
     let row2 = '';
     if (cat === 'movies') {
-      row2 = `
-        <div class="filter-group russian-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="russian-toggle" ${state.origin === 'russian' ? 'checked' : ''}>
-            <span>Русское</span>
-          </label>
-        </div>
-      `;
+      row2 = '';
     } else if (cat === 'series') {
       row2 = `
-        <div class="filter-group russian-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="russian-toggle" ${state.origin === 'russian' ? 'checked' : ''}>
-            <span>Русское</span>
-          </label>
-        </div>
         <div class="filter-group">
           <label for="series-ongoing-select">Статус:</label>
           <select id="series-ongoing-select">
@@ -377,6 +409,12 @@ document.addEventListener('DOMContentLoaded', () => {
           <select id="series-voice-select">
             ${SERIES_VOICEOVERS.map(v => `<option value="${v}" ${state.voiceover === v ? 'selected' : ''}>${v === 'all' ? 'Все студии' : v}</option>`).join('')}
           </select>
+        </div>
+        <div class="filter-group russian-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="russian-toggle" ${state.origin === 'russian' ? 'checked' : ''}>
+            <span>Русское</span>
+          </label>
         </div>
       `;
     } else if (cat === 'anime') {
@@ -696,9 +734,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // -------------------------------------------------------------
   // Data Fetching & Views Router
   // -------------------------------------------------------------
+  const SESSION_PAGE_CACHE = new Map();
+
   function fetchReleases(isSilent = false) {
     updateCounts();
-    if (progressBar) progressBar.classList.add('active');
+    startLoadingProgress();
 
     const catTitle = getCategoryTitle(state.category);
 
@@ -741,7 +781,7 @@ document.addEventListener('DOMContentLoaded', () => {
           tableViewContainer.innerHTML = `<div style="color: #ef4444; padding: 20px;">Ошибка: ${err.message}</div>`;
         })
         .finally(() => {
-          if (progressBar) progressBar.classList.remove('active');
+          finishLoadingProgress();
         });
       return;
     }
@@ -786,7 +826,7 @@ document.addEventListener('DOMContentLoaded', () => {
           cardsGrid.innerHTML = `<div style="grid-column: 1/-1; color: #ef4444; padding: 40px; text-align: center;">Ошибка: ${err.message}</div>`;
         })
         .finally(() => {
-          if (progressBar) progressBar.classList.remove('active');
+          finishLoadingProgress();
         });
       return;
     }
@@ -795,59 +835,66 @@ document.addEventListener('DOMContentLoaded', () => {
     tableViewContainer.style.display = 'none';
     cardsGrid.style.display = 'grid';
 
-    if (!isSilent) {
-      renderSkeletonGrid(state.limit || 15);
-      const yearInfo = (['movies', 'series', 'anime'].includes(state.category)) ? ` (${state.year === 'all' ? 'все годы' : state.year})` : '';
-      consoleStatusText.textContent = `Запрос релизов [${catTitle}${yearInfo}], стр. ${state.page}...`;
-    }
-
     const params = new URLSearchParams({
       category: state.category,
-      year: state.year,
       min_rating: state.min_rating,
       max_size: state.max_size,
       genre: state.genre,
-      origin: state.origin,
+      year: state.year,
       search: state.search,
       page: state.page,
-      limit: state.limit
+      limit: state.limit,
+      origin: state.origin,
+      streaming: state.streaming,
+      voiceover: state.voiceover,
+      ongoing: state.ongoing,
+      has_subtitles: state.has_subtitles,
+      anime_type: state.anime_type,
+      repack_author: state.repack_author,
+      release_format: state.release_format,
+      crack_status: state.crack_status,
+      software_category: state.software_category
     });
 
     if (state.qualities && state.qualities.length > 0) {
       params.append('quality', state.qualities.join(','));
     }
-    if (state.streaming && state.streaming !== 'all') {
-      params.append('streaming', state.streaming);
+
+    const cacheKey = params.toString();
+    if (SESSION_PAGE_CACHE.has(cacheKey) && !isSilent) {
+      const cached = SESSION_PAGE_CACHE.get(cacheKey);
+      renderCards(cached.items, false);
+      state.totalPages = cached.pages || 1;
+      currentPageSpan.textContent = cached.page;
+      totalPagesSpan.textContent = state.totalPages;
+      resultsCount.textContent = `Найдено на радаре (${catTitle}): ${cached.total} (показано ${cached.items.length})`;
+      btnPrev.disabled = cached.page <= 1;
+      btnNext.disabled = cached.page >= state.totalPages;
+      if (cached.total === 0 && cached.items.length === 0) {
+        cardsGrid.style.display = 'none';
+        emptyState.style.display = 'block';
+        emptyState.querySelector('.empty-text').textContent = 'По вашему запросу ничего не найдено';
+      } else {
+        cardsGrid.style.display = 'grid';
+        emptyState.style.display = 'none';
+      }
+      finishLoadingProgress();
+      return;
     }
-    if (state.voiceover && state.voiceover !== 'all') {
-      params.append('voiceover', state.voiceover);
-    }
-    if (state.ongoing && state.ongoing !== 'all') {
-      params.append('ongoing', state.ongoing);
-    }
-    if (state.has_subtitles) {
-      params.append('has_subtitles', '1');
-    }
-    if (state.anime_type && state.anime_type !== 'all') {
-      params.append('anime_type', state.anime_type);
-    }
-    if (state.repack_author && state.repack_author !== 'all') {
-      params.append('repack_author', state.repack_author);
-    }
-    if (state.release_format && state.release_format !== 'all') {
-      params.append('release_format', state.release_format);
-    }
-    if (state.crack_status && state.crack_status !== 'all') {
-      params.append('crack_status', state.crack_status);
-    }
-    if (state.software_category && state.software_category !== 'all') {
-      params.append('software_category', state.software_category);
+
+    if (!isSilent) {
+      renderSkeletonGrid(state.limit);
+      resultsCount.textContent = `Поиск релизов (${catTitle})...`;
     }
 
     fetch(`/api/items?${params.toString()}`)
       .then(res => res.json())
       .then(data => {
-        stopProgressiveFill();
+        SESSION_PAGE_CACHE.set(cacheKey, data);
+        if (SESSION_PAGE_CACHE.size > 50) {
+          const firstKey = SESSION_PAGE_CACHE.keys().next().value;
+          SESSION_PAGE_CACHE.delete(firstKey);
+        }
         renderCards(data.items, false);
         state.totalPages = data.pages || 1;
         currentPageSpan.textContent = data.page;
@@ -878,7 +925,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       })
       .finally(() => {
-        if (progressBar) progressBar.classList.remove('active');
+        finishLoadingProgress();
       });
   }
 
@@ -1299,7 +1346,7 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
       <div class="card-content">
         <h3 class="card-title" title="${escapeHtml(item.title)}">${escapeHtml(displayTitle)}</h3>
-        <div class="card-orig">${escapeHtml(displayOrig ? (displayOrig + (item.year ? ' · ' + item.year : '')) : subTitleText)}</div>
+        <div class="card-orig">${escapeHtml(item.category === 'games' ? (item.year ? String(item.year) : '') : (displayOrig ? (displayOrig + (item.year ? ' · ' + item.year : '')) : subTitleText))}</div>
         ${genreHtml}
         ${countryHtml}
         ${metaRowHtml}
@@ -1897,11 +1944,17 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     } else if (category === 'games') {
       spoilersHtml = `
-        ${item.description ? `
+        ${(item.description || item.system_reqs) ? `
           <details class="modal-spoiler">
-            <summary>🎮 Об игре</summary>
+            <summary>📖 Описание и системные требования</summary>
             <div class="modal-spoiler-content">
-              <p class="synopsis-text">${escapeHtml(item.description)}</p>
+              ${item.description ? `<p class="synopsis-text" style="margin-bottom: 12px;">${escapeHtml(item.description)}</p>` : ''}
+              ${item.system_reqs ? `
+                <div style="margin-top: 8px;">
+                  <h4 style="font-size: 13px; color: var(--accent); margin-bottom: 6px;">⚙️ Системные требования:</h4>
+                  <pre class="synopsis-text" style="white-space: pre-wrap; font-family: 'JetBrains Mono', monospace; font-size: 12px; background: rgba(0,0,0,0.25); padding: 10px; border-radius: 6px;">${escapeHtml(item.system_reqs)}</pre>
+                </div>
+              ` : ''}
             </div>
           </details>
         ` : ''}
@@ -1912,14 +1965,6 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="modal-spoiler-content">
               ${item.repack_author ? `<div class="meta-highlight-box"><h4>Релиз от: ${escapeHtml(item.repack_author)}</h4>Таблетка / Лекарство: <strong>${escapeHtml(item.crack_status || 'Вшито')}</strong></div>` : ''}
               ${item.repack_features ? `<p class="synopsis-text" style="white-space: pre-line;">${escapeHtml(item.repack_features)}</p>` : ''}
-            </div>
-          </details>
-        ` : ''}
-        ${item.system_reqs ? `
-          <details class="modal-spoiler">
-            <summary>⚙️ Системные требования</summary>
-            <div class="modal-spoiler-content">
-              <p class="synopsis-text" style="white-space: pre-line; font-family: monospace; font-size: 13px;">${escapeHtml(item.system_reqs)}</p>
             </div>
           </details>
         ` : ''}

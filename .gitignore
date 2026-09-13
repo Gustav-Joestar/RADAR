@@ -22,6 +22,7 @@ data/*.sqlite3
 data/*.migrated
 data/posters/*
 !data/posters/.gitkeep
+data/temp_cache/
 
 # Logs
 *.log

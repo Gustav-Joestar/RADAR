@@ -16,7 +16,7 @@ MONTHS = {
 }
 
 CATEGORY_MAP = {
-    "movies": [1, 5, 7],     # 1=Зарубежные фильмы, 5=Наши фильмы, 7=Мультипликация
+    "movies": [1, 5],        # 1=Зарубежные фильмы, 5=Наши фильмы (мультипликация 7 исключена)
     "series": [4, 16, 6, 7], # 4=Зарубежные сериалы, 16=Наши сериалы, 6=Телевизор, 7=Мультипликация (сериалы)
     "anime": [10],           # 10=Аниме
     "games": [8],            # 8=Игры
@@ -43,11 +43,15 @@ STREAMING_PLATFORMS = [
 
 VOICE_STUDIOS_SERIES = [
     ("lostfilm", "LostFilm"), ("кубик в кубе", "Кубик в кубе"),
-    ("hdrezka", "HDRezka Studio"), ("newstudio", "NewStudio"),
-    ("tvshows", "TVShows"), ("alexfilm", "AlexFilm"),
-    ("пифагор", "Пифагор"), ("дубликат", "Дубликат"),
-    ("coldfilm", "ColdFilm"), ("дубляж", "Дубляж"),
-    ("red head sound", "Red Head Sound"), ("rhs", "Red Head Sound")
+    ("hdrezka studio", "HDRezka Studio"), ("hdrezka", "HDRezka Studio"), ("rezka", "HDRezka Studio"),
+    ("newstudio", "NewStudio"), ("tvshows", "TVShows"), ("alexfilm", "AlexFilm"),
+    ("пифагор", "Пифагор"), ("дубликат", "Дубликат"), ("coldfilm", "ColdFilm"),
+    ("red head sound", "Red Head Sound"), ("rhs", "Red Head Sound"),
+    ("flarrow films", "Flarrow Films"), ("flarrow", "Flarrow Films"),
+    ("кураж-бамбей", "Кураж-Бамбей"), ("кураж бамбей", "Кураж-Бамбей"),
+    ("невафильм", "Невафильм"), ("св-дубль", "СВ-Дубль"), ("sdi media", "SDI Media"),
+    ("дублированный", "Дублированный"), ("дубляж", "Дубляж"),
+    ("профессиональный", "Профессиональный"), ("многоголосый", "Многоголосый")
 ]
 
 VOICE_STUDIOS_ANIME = [
@@ -56,7 +60,14 @@ VOICE_STUDIOS_ANIME = [
     ("dream cast", "Dream Cast"), ("kansai", "Kansai Studio"),
     ("persona99", "Persona99"), ("crunchyroll", "Crunchyroll"),
     ("reanimedia", "Reanimedia"), ("jam club", "JAM Club"),
-    ("jam", "JAM Club"), ("amber", "Amber"), ("steponee", "StepOnee")
+    ("jam", "JAM Club"), ("amber", "Amber"), ("steponee", "StepOnee"),
+    ("animevost", "AnimeVost"), ("vost", "AnimeVost"),
+    ("deep", "DEEP"), ("дубляж", "Дубляж"), ("дублированный", "Дублированный"),
+    ("flarrow films", "Flarrow Films"), ("flarrow", "Flarrow Films"),
+    ("sovet romantica", "Sovet Romantica"), ("sovetromantica", "Sovet Romantica"),
+    ("yummyanime", "YummyAnime"), ("amazing dubbing", "Amazing Dubbing"),
+    ("кансай", "Kansai Studio"), ("анидуб", "AniDUB"), ("анилибрия", "AniLibria"),
+    ("студийная банда", "Studio Band"), ("дрим каст", "Dream Cast")
 ]
 
 GAME_REPACKERS = [
@@ -546,10 +557,16 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
     for url in urls_to_scan:
         log(f"📡 [СКАНЕР] Проверка страницы: {url}", "DEBUG")
         try:
-            r = requests.get(url, impersonate='chrome124', timeout=8)
-            if r.status_code != 200:
-                continue
-            soup = BeautifulSoup(r.content.decode('utf-8', errors='replace'), 'html.parser')
+            cached_html = database.get_session_cache(url)
+            if cached_html:
+                html_text = cached_html
+            else:
+                r = requests.get(url, impersonate='chrome124', timeout=8)
+                if r.status_code != 200:
+                    continue
+                html_text = r.content.decode('utf-8', errors='replace')
+                database.set_session_cache(url, html_text)
+            soup = BeautifulSoup(html_text, 'html.parser')
             rows = soup.select('div#index tr')
                 
             for tr in rows:
@@ -725,6 +742,23 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     else:
                         seasons_count_init = 0
 
+                # Check text after pipe '|' for studio/voiceover and subtitles
+                after_pipe = raw_title.split('|')[-1].strip() if '|' in raw_title else ''
+                after_pipe_lower = after_pipe.lower()
+                if category_name in ("series", "anime", "movies"):
+                    if not has_subs_init and any(s in after_pipe_lower or s in t_lower for s in ["sub", "субтитр", "саб"]):
+                        has_subs_init = 1
+                    if not voice_studio_init and after_pipe:
+                        studio_list = VOICE_STUDIOS_ANIME if category_name == "anime" else VOICE_STUDIOS_SERIES
+                        for kw, stud in studio_list:
+                            if kw in after_pipe_lower:
+                                voice_studio_init = stud
+                                break
+                        if not voice_studio_init:
+                            # If after_pipe does not look like technical tags, treat as translation/studio
+                            if not re.search(r'\b(?:1080p|720p|2160p|4k|bdrip|web-dl|hevc|x264|x265|avc|remux|hdr)\b', after_pipe_lower):
+                                voice_studio_init = after_pipe.strip()
+
                 elif category_name == "games":
                     release_format_init, repack_author_init = extract_game_meta_from_title(raw_title)
 
@@ -879,14 +913,19 @@ def classify_anime_type(raw_title, duration_str="", full_text=""):
     if bool(re.search(series_dur_pattern, d_lower, re.I)):
         return "ТВ-сериал"
 
-    # 3. Detect movie cues in title (e.g. "фильм", "movie", "the movie", "полнометраж")
+    # 3. Detect movie cues in title (e.g. "фильм", "movie", "the movie", "полнометраж", "полнометражный")
     # But only if it does not have multi-episode cues
-    is_movie_title = bool(re.search(r'\b(?:фильм|movie|the movie|полнометраж)\b', t_lower, re.I))
+    is_movie_title = bool(re.search(r'\b(?:фильм|movie|the movie|полнометраж|полнометражный|film)\b', t_lower, re.I))
     if is_movie_title and not re.search(r'\[\d+-\d+\]|\d+\s*из\s*\d+', t_lower):
         return "Полнометражный фильм"
 
-    # 4. Check duration in minutes
+    # 4. Check duration in minutes (from duration_str or extracted from full_text)
     dur_min = extract_duration_minutes(duration_str)
+    if dur_min <= 0 and full_text:
+        m_dur = re.search(r'(?:Продолжительность|Время|Duration|Хронометраж)\s*:\s*([^\n\r]+)', full_text, re.I)
+        if m_dur:
+            dur_min = extract_duration_minutes(m_dur.group(1))
+
     if dur_min > 60:
         # Long single video > 60 min (e.g. 90-150 min) without series indicators is a movie
         return "Полнометражный фильм"
@@ -1292,11 +1331,16 @@ def backfill_missing_ratings(limit=30):
 def parse_full_details(torrent_id):
     url = f"http://rutor.info/torrent/{torrent_id}"
     try:
-        r = requests.get(url, impersonate='chrome124', timeout=10)
-        if r.status_code != 200:
-            return None
+        cached_html = database.get_session_cache(url)
+        if cached_html:
+            html = cached_html
+        else:
+            r = requests.get(url, impersonate='chrome124', timeout=10)
+            if r.status_code != 200:
+                return None
+            html = r.content.decode('utf-8', errors='replace')
+            database.set_session_cache(url, html)
 
-        html = r.content.decode('utf-8', errors='replace')
         soup = BeautifulSoup(html, 'html.parser')
         details_table = soup.select_one('table#details')
         if not details_table:
@@ -1342,7 +1386,11 @@ def parse_full_details(torrent_id):
         director = find_field([r'Режиссер:\s*([^\n\r]+)', r'Режиссёр:\s*([^\n\r]+)', r'Director:\s*([^\n\r]+)'])
         actors = find_field([r'В ролях:\s*([^\n\r]+)', r'Актеры:\s*([^\n\r]+)', r'Cast:\s*([^\n\r]+)'])
         country = extract_clean_country(full_text)
-        duration = find_field([r'Продолжительность:\s*([^\n\r]+)', r'Время:\s*([^\n\r]+)'])
+        duration = find_field([r'Продолжительность:\s*([^\n\r]+)', r'Время:\s*([^\n\r]+)', r'Хронометраж:\s*([^\n\r]+)'])
+        if not duration:
+            m_dur = re.search(r'(?:Продолжительность|Время|Duration|Хронометраж)\s*:\s*([^\n\r]+)', full_text, re.I)
+            if m_dur:
+                duration = m_dur.group(1).strip()
 
         # Fallback genre detection if not explicitly parsed
         if not genre:
@@ -1537,7 +1585,7 @@ def parse_full_details(torrent_id):
         # Exact 'Добавлен' date from details table
         date_added_full = ""
         date_ts_full = 0
-        m_added = re.search(r'Добавлен\s*</td>\s*<td>\s*(\d{2}-\d{2}-\d{4}(?:\s+\d{2}:\d{2}:\d{2})?)', r.text)
+        m_added = re.search(r'Добавлен\s*</td>\s*<td>\s*(\d{2}-\d{2}-\d{4}(?:\s+\d{2}:\d{2}:?\d{2})?)', html)
         if m_added:
             date_added_full = m_added.group(1).split()[0]
             date_ts_full = parse_date_to_timestamp(m_added.group(1))

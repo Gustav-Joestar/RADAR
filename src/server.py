@@ -8,6 +8,7 @@ import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
+from concurrent.futures import ThreadPoolExecutor
 import time
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,13 +30,53 @@ HEARTBEAT_ACTIVE = False
 ACTIVE_CRAWLS = {}
 CRAWL_LOCK = threading.Lock()
 
-def start_background_fill(category, year=0):
+POSTER_PRELOAD_POOL = ThreadPoolExecutor(max_workers=3)
+PENDING_POSTER_TIDS = set()
+POSTER_PRELOAD_LOCK = threading.Lock()
+
+def queue_poster_preload(tid, category, title="", year=0, title_en=""):
+    with POSTER_PRELOAD_LOCK:
+        if tid in PENDING_POSTER_TIDS:
+            return
+        PENDING_POSTER_TIDS.add(tid)
+    def worker():
+        try:
+            local_jpg = os.path.join(database.POSTERS_DIR, f"{tid}.jpg")
+            if not os.path.exists(local_jpg):
+                try:
+                    tracker_engine.parse_full_details(int(tid))
+                except Exception:
+                    pass
+            if not os.path.exists(local_jpg) and title:
+                try:
+                    web_p = tracker_engine.fetch_web_poster(title, int(year or 0), title_en, category)
+                    if web_p:
+                        tracker_engine.cache_poster_locally(str(tid), web_p)
+                        database.update_release_poster(str(tid), f"/posters/{tid}.jpg")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        finally:
+            with POSTER_PRELOAD_LOCK:
+                PENDING_POSTER_TIDS.discard(tid)
+    POSTER_PRELOAD_POOL.submit(worker)
+
+def start_background_fill(category, year=0, genre="all"):
     with CRAWL_LOCK:
         thread = ACTIVE_CRAWLS.get(category)
         if thread and thread.is_alive():
             return
         def worker():
             log(f"⚡ [ЛАЙВ-ДОБОР] Фоновый поиск дополнительных раздач для [{category}]...", "INFO")
+            if genre and genre != "all":
+                q_genre = f"{genre} {year}" if year > 0 else genre
+                log(f"⚡ [ЛАЙВ-ДОБОР] Поиск по жанру «{q_genre}» в [{category}]...", "INFO")
+                try:
+                    tracker_engine.search_tracker_by_query(q_genre, category)
+                except Exception as e:
+                    log(f"⚠️ Ошибка поиска по жанру: {e}", "DEBUG")
+
             for page_idx in range(4):
                 try:
                     cnt = tracker_engine.scan_next_tracker_page(category, year)
@@ -375,7 +416,7 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         needs_fill = False
         if not search and len(data["items"]) < limit:
             needs_fill = True
-            start_background_fill(category, y_scan)
+            start_background_fill(category, y_scan, genre)
 
         data["needs_fill"] = needs_fill
 
@@ -507,7 +548,7 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             c = conn.cursor()
             placeholders = ",".join(["?"] * len(tids))
             c.execute(f"""
-                SELECT torrent_id, category, poster_url, kp_rating, imdb_rating, shikimori_rating, mal_rating,
+                SELECT torrent_id, category, title, title_ru, title_en, year, poster_url, kp_rating, imdb_rating, shikimori_rating, mal_rating,
                        metacritic_critic, metacritic_user, opencritic_rating, genre, country, quality,
                        release_format, repack_author, app_version, is_ongoing, anime_type,
                        seasons_count, date_added
@@ -516,6 +557,20 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             """, tids)
             rows = [dict(r) for r in c.fetchall()]
             conn.close()
+
+            # Trigger background preloading for missing posters
+            for r in rows:
+                tid = str(r.get("torrent_id"))
+                p_url = r.get("poster_url")
+                local_jpg = os.path.join(database.POSTERS_DIR, f"{tid}.jpg")
+                if not p_url or not os.path.exists(local_jpg):
+                    queue_poster_preload(
+                        tid, category,
+                        title=r.get("title_ru") or r.get("title") or "",
+                        year=r.get("year") or 0,
+                        title_en=r.get("title_en") or ""
+                    )
+
             self.send_json({"items": rows})
         except Exception as e:
             self.send_json({"items": [], "error": str(e)})
@@ -549,7 +604,8 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(content)
         except Exception as e:
-            self.send_error(500, f"Error reading file: {e}")
+            logger.error(f"Error reading file {full_path}: {e}")
+            self.send_error(500, "Internal Server Error")
 
     def serve_static(self, file_path):
         if not os.path.exists(file_path):

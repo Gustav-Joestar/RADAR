@@ -2,13 +2,53 @@ import sqlite3
 import os
 import time
 import re
+import hashlib
+import shutil
+import json
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 POSTERS_DIR = os.path.join(DATA_DIR, "posters")
+TEMP_CACHE_DIR = os.path.join(DATA_DIR, "temp_cache")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(POSTERS_DIR, exist_ok=True)
+os.makedirs(TEMP_CACHE_DIR, exist_ok=True)
 RADAR_DB = os.path.join(DATA_DIR, "radar.db")
+
+def get_session_cache(key: str):
+    """Retrieve cached data from data/temp_cache/ if exists."""
+    if not key:
+        return None
+    try:
+        h = hashlib.md5(key.encode('utf-8')).hexdigest()
+        fpath = os.path.join(TEMP_CACHE_DIR, f"{h}.cache")
+        if os.path.exists(fpath):
+            with open(fpath, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return None
+
+def set_session_cache(key: str, data):
+    """Save data into data/temp_cache/."""
+    if not key:
+        return
+    try:
+        h = hashlib.md5(key.encode('utf-8')).hexdigest()
+        fpath = os.path.join(TEMP_CACHE_DIR, f"{h}.cache")
+        with open(fpath, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+def cleanup_temp_cache():
+    """Wipe all temporary session cache files."""
+    try:
+        if os.path.exists(TEMP_CACHE_DIR):
+            shutil.rmtree(TEMP_CACHE_DIR, ignore_errors=True)
+            os.makedirs(TEMP_CACHE_DIR, exist_ok=True)
+    except Exception:
+        pass
 
 CATEGORIES = ["movies", "series", "anime", "games", "software"]
 
@@ -494,9 +534,57 @@ def query_season_releases(clean_title, season_num=0, category="series", is_pack=
             if start_s <= s_num <= end_s:
                 matched = True
 
+        anime_movie_patterns = (
+            r'\b(?:фильм|movie|the movie|полнометраж|полнометражный|gekijouban|film|guren no kizuna|'
+            r'алые\s*узы|слёзы\s*синего\s*моря)\b'
+        )
+
         if matched:
+            # Strict isolation: if querying anime seasons, exclude full-length movies (>60 min or classified as movie)
+            if norm_cat == "anime" or category == "anime":
+                dur_str = r.get("duration") or ""
+                dur_min = 0
+                m_hms = re.search(r'(\d{1,2}):(\d{2}):(\d{2})', dur_str)
+                if m_hms:
+                    dur_min = int(m_hms.group(1)) * 60 + int(m_hms.group(2))
+                else:
+                    m_m = re.search(r'(\d+)\s*мин', dur_str, re.I)
+                    if m_m:
+                        dur_min = int(m_m.group(1))
+
+                is_anime_movie = (
+                    r.get("anime_type") == "Полнометражный фильм"
+                    or dur_min > 60
+                    or bool(re.search(anime_movie_patterns, raw_t, re.I))
+                )
+                if is_anime_movie and not bool(re.search(anime_movie_patterns, clean_title.lower(), re.I)):
+                    continue
             filtered.append(r)
         elif s_num == 1 and not bool(re.search(r'(?:\[|\()(?:сезон\s*[2-9]|[2-9]\s*сезон|0?[2-9]x|s0?[2-9])', raw_t, re.I)):
+            # Strict isolation: exclude anime movies from Season 1
+            if norm_cat == "anime" or category == "anime":
+                dur_str = r.get("duration") or ""
+                dur_min = 0
+                m_hms = re.search(r'(\d{1,2}):(\d{2}):(\d{2})', dur_str)
+                if m_hms:
+                    dur_min = int(m_hms.group(1)) * 60 + int(m_hms.group(2))
+                else:
+                    m_m = re.search(r'(\d+)\s*мин', dur_str, re.I)
+                    if m_m:
+                        dur_min = int(m_m.group(1))
+
+                is_anime_movie = (
+                    r.get("anime_type") == "Полнометражный фильм"
+                    or dur_min > 60
+                    or bool(re.search(anime_movie_patterns, raw_t, re.I))
+                )
+                if is_anime_movie and not bool(re.search(anime_movie_patterns, clean_title.lower(), re.I)):
+                    continue
+
+                # If title has a colon with standalone feature subtitle without episode/season tags, exclude from season 1
+                has_ep_tags = bool(re.search(r'\[\s*(?:\d+-\d+|\d+\s*из\s*\d+|\d+x\d+|s0?1)\s*\]', raw_t, re.I))
+                if not has_ep_tags and ':' in (r.get("title_ru") or ''):
+                    continue
             filtered.append(r)
             
     return filtered
@@ -1090,6 +1178,7 @@ def cleanup_session_cache():
                         os.remove(fpath)
                     except Exception:
                         pass
+        cleanup_temp_cache()
         return True
     except Exception:
         return False

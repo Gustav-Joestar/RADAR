@@ -62,19 +62,19 @@ body {
   border-bottom: 1px solid var(--border-color);
 }
 
-/* Global Full-Width Loading Progress Bar (Determinate 0→100%) */
+/* Global Full-Width Loading Progress Bar */
 .global-progress-bar {
-  position: absolute;
-  bottom: 0;
+  position: fixed;
+  top: 0;
   left: 0;
   width: 100%;
   height: 3px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(16, 185, 129, 0.1);
   overflow: hidden;
   pointer-events: none;
-  z-index: 1000;
+  z-index: 99999;
   opacity: 0;
-  transition: opacity 0.3s ease;
+  transition: opacity 0.35s ease;
 }
 
 .global-progress-bar.active {
@@ -84,17 +84,17 @@ body {
 .progress-fill {
   height: 100%;
   width: 0%;
-  border-radius: 0 2px 2px 0;
-  background: linear-gradient(90deg, var(--accent), #38bdf8, var(--accent));
-  background-size: 200% 100%;
-  box-shadow: 0 0 10px var(--accent-glow), 0 0 4px #38bdf8;
-  transition: width 0.5s ease;
-  animation: progressShimmer 2s linear infinite;
+  border-radius: 0 4px 4px 0;
+  background: linear-gradient(90deg, #10b981, #06b6d4, #3b82f6, #10b981);
+  background-size: 300% 100%;
+  box-shadow: 0 0 12px #10b981, 0 0 20px rgba(6, 182, 212, 0.6);
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: progressNeonGlow 1.5s linear infinite;
 }
 
-@keyframes progressShimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+@keyframes progressNeonGlow {
+  0% { background-position: 0% 0; }
+  100% { background-position: 300% 0; }
 }
 
 .header-container {
@@ -524,7 +524,7 @@ select:focus {
   font-size: 13px;
 }
 
-/* Poster Loading Spinner */
+/* Poster Loading Spinner with Shimmer */
 .poster-loading {
   width: 100%;
   height: 100%;
@@ -532,12 +532,21 @@ select:focus {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #0f1522 0%, #182234 50%, #0f1522 100%);
-  background-size: 200% 200%;
-  animation: posterPulse 2s ease-in-out infinite;
+  background: linear-gradient(
+    105deg,
+    #0f172a 0%,
+    #1e293b 35%,
+    rgba(16, 185, 129, 0.15) 50%,
+    #1e293b 65%,
+    #0f172a 100%
+  );
+  background-size: 250% 100%;
+  animation: shimmerSweep 2s cubic-bezier(0.4, 0, 0.2, 1) infinite, skeletonPulse 2.8s ease-in-out infinite;
   color: var(--text-dim);
   font-size: 12px;
   gap: 10px;
+  position: relative;
+  overflow: hidden;
 }
 
 .poster-loading .spinner-icon {
@@ -547,8 +556,9 @@ select:focus {
 }
 
 .poster-loading .spinner-text {
-  opacity: 0.6;
+  opacity: 0.7;
   letter-spacing: 0.3px;
+  color: var(--text-muted);
 }
 
 @keyframes posterPulse {
@@ -1317,23 +1327,43 @@ select:focus {
    Shimmer & Skeleton Loading (Live Hydration & Lazy Modal)
    ========================================================================== */
 
-@keyframes shimmerAnim {
+@keyframes shimmerSweep {
   0% {
-    background-position: -200% 0;
+    background-position: -250% 0;
   }
   100% {
-    background-position: 200% 0;
+    background-position: 250% 0;
+  }
+}
+
+@keyframes skeletonPulse {
+  0%, 100% {
+    opacity: 0.85;
+    filter: brightness(0.95);
+  }
+  50% {
+    opacity: 1;
+    filter: brightness(1.15);
   }
 }
 
 .skeleton {
-  background: linear-gradient(90deg, #131b28 25%, #1e2c40 50%, #131b28 75%) !important;
-  background-size: 200% 100% !important;
-  animation: shimmerAnim 1.5s infinite ease-in-out !important;
+  background: linear-gradient(
+    105deg,
+    rgba(15, 23, 36, 0.9) 0%,
+    rgba(28, 42, 62, 0.95) 30%,
+    rgba(16, 185, 129, 0.22) 50%,
+    rgba(28, 42, 62, 0.95) 70%,
+    rgba(15, 23, 36, 0.9) 100%
+  ) !important;
+  background-size: 250% 100% !important;
+  animation: shimmerSweep 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite, skeletonPulse 2.4s ease-in-out infinite !important;
   border-radius: 6px;
   color: transparent !important;
   user-select: none;
   border: none !important;
+  position: relative;
+  overflow: hidden;
 }
 
 .skeleton-card {
