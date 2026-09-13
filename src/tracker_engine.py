@@ -1634,10 +1634,14 @@ def parse_full_details(torrent_id):
                     if kw in f_lower:
                         repack_auth = auth
                         break
-                if "repack" in f_lower:
+                if repack_auth == "InsaneRamZes":
+                    rel_format = "Portable"
+                elif repack_auth == "FitGirl":
                     rel_format = "RePack"
                 elif "portable" in f_lower:
                     rel_format = "Portable"
+                elif "repack" in f_lower:
+                    rel_format = "RePack"
                 elif "steam-rip" in f_lower or "steamrip" in f_lower:
                     rel_format = "Steam-Rip"
                 elif "gog" in f_lower:

@@ -144,6 +144,10 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => openModal(urlParams.get('modal')), 700);
   }
 
+  window.openModal = openModal;
+  window.applyFilters = applyFilters;
+  window.closeModal = closeModal;
+
   updateTabsUI();
   renderCategoryToolbar();
   loadYearsAndGenres().finally(() => {
@@ -273,14 +277,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Build Row 1: Common primary controls
     let row1 = `
-      <button id="btn-refresh" class="btn-refresh" title="Сканировать трекер и обновить базу данных">
-        <span class="refresh-icon">🔄</span> Сканировать трекер
-      </button>
       <div class="filter-group search-group">
         <span class="filter-icon">🔍</span>
         <input type="text" id="search-input" placeholder="${getSearchPlaceholder(cat)}" value="${escapeHtml(state.search)}" />
       </div>
-      <button id="btn-apply-filters" class="btn-primary btn-apply" title="Применить выбранные фильтры и начать поиск">🔍 Найти</button>
+      <button id="btn-apply-filters" class="btn-primary btn-apply" title="Применить выбранные фильтры и найти релизы">🔍 Найти</button>
     `;
 
     // Row 1 Qualities
@@ -305,6 +306,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <label class="checkbox-label"><input type="checkbox" id="q-1080p" ${state.qualities.includes('1080p') ? 'checked' : ''} value="1080p">1080p</label>
         </div>
       `;
+    }
+
     // Row 1 Year & Genre dropdowns
     if (['movies', 'series', 'anime'].includes(cat)) {
       row1 += `
@@ -1142,7 +1145,7 @@ document.addEventListener('DOMContentLoaded', () => {
     card.className = 'media-card';
     card.id = `card-${item.torrent_id}`;
     card.dataset.titleRu = (item.title_ru || '').trim().toLowerCase();
-    card.onclick = () => openModal(item.torrent_id);
+    card.onclick = () => openModal(item.torrent_id, item.category);
 
     const isSeriesOrAnimeSeries = item.category === 'series' || (item.category === 'anime' && item.anime_type !== 'Полнометражный фильм');
 
@@ -1172,7 +1175,13 @@ document.addEventListener('DOMContentLoaded', () => {
     let subTitleText = '';
     if (item.category === 'games') {
       const auth = item.repack_author;
-      const fmt = item.release_format || 'RePack';
+      let fmt = item.release_format;
+      if (auth && auth.toLowerCase().includes('ramzes')) {
+        fmt = 'Portable';
+      } else if (auth && auth.toLowerCase().includes('fitgirl')) {
+        fmt = 'RePack';
+      }
+      if (!fmt) fmt = 'RePack';
       if (auth && auth.toLowerCase() !== fmt.toLowerCase()) {
         subTitleText = `${fmt} от ${auth}`;
       } else {
@@ -1517,7 +1526,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }, { once: true });
   }
 
-  function openModal(torrentId) {
+  function openModal(torrentId, category) {
+    window.openModal = openModal;
     modalOverlay.style.display = 'flex';
     modalContent.innerHTML = `
       <div class="modal-loading-overlay" id="modal-blur-overlay">
@@ -1544,9 +1554,16 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     `;
 
-    fetch(`/api/item?id=${torrentId}`)
+    const catParam = category || state.category;
+    fetch(`/api/item?id=${torrentId}&category=${catParam}`)
       .then(res => res.json())
-      .then(item => renderModalDetails(item))
+      .then(item => {
+        if (item.error) {
+          modalContent.innerHTML = `<div style="color: #ef4444; padding: 40px; text-align: center;">Ошибка загрузки деталей: ${escapeHtml(item.error)}</div>`;
+          return;
+        }
+        renderModalDetails(item);
+      })
       .catch(err => {
         modalContent.innerHTML = `<div style="color: #ef4444; padding: 40px; text-align: center;">Ошибка загрузки деталей: ${escapeHtml(err.message)}</div>`;
       });
@@ -1967,8 +1984,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const pub = item.publisher || item.actors;
       if (pub) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Издатель:</span><span class="detail-value">${escapeHtml(pub)}</span></div>`;
       const relDate = item.release_date || (item.year ? String(item.year) : '');
-      if (relDate) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Дата выхода:</span><span class="detail-value">${escapeHtml(relDate)}</span></div>`;
-      const fmt = item.release_format || (item.title && item.title.includes('RePack') ? 'RePack' : 'Лицензия');
+      let fmt = item.release_format;
+      if (item.repack_author === 'InsaneRamZes') {
+        fmt = 'Portable';
+      } else if (item.repack_author === 'FitGirl') {
+        fmt = 'RePack';
+      }
+      if (!fmt) {
+        fmt = (item.title && item.title.toLowerCase().includes('portable')) ? 'Portable' : ((item.title && item.title.includes('RePack')) ? 'RePack' : 'Лицензия');
+      }
       if (fmt) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Тип издания:</span><span class="detail-value">${escapeHtml(fmt)}</span></div>`;
       if (item.repack_author) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Автор сборки:</span><span class="detail-value">${escapeHtml(item.repack_author)}</span></div>`;
       if (item.crack_status) detailInfoRowsHtml += `<div class="detail-row"><span class="detail-label">Таблетка:</span><span class="detail-value">${escapeHtml(item.crack_status)}</span></div>`;

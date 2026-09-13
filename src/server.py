@@ -291,8 +291,8 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         
         releases = database.query_season_releases(title, season, category=category, is_pack=is_pack)
         
-        # If fewer than 2 releases found in local DB, search on tracker on-demand for full series
-        if len(releases) < 2 and title:
+        # If fewer than 15 releases found in local DB, search on tracker on-demand for full series
+        if len(releases) < 15 and title:
             clean_q = re.sub(r'[\'\"`’:\(\)\[\],.]', ' ', title).strip()
             clean_q = re.sub(r'\s+', ' ', clean_q)
             log(f"🔍 [СЕЗОНЫ] Поиск всех раздач сериала на трекере: «{clean_q}» в [{category}]...", "INFO")
@@ -338,10 +338,10 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         q_desc = ",".join(qualities) if qualities else "любое"
         log(f"📡 [РАДАР] Запрос витрины [{category}], {y_desc}, происхождение: {origin}, жанр: {genre}, рейтинг: >={min_rating}, качество: {q_desc}, стр. {page}", "INFO")
 
-        # If user is searching by title/query, perform deep search on tracker archive
+        # If user is searching by title/query, perform deep search on tracker archive if fewer than 15 local items
         if search and search.strip():
-            local_matches = database.query_releases(category=category, search=search, limit=1, origin=origin)
-            if local_matches['total'] < 3:
+            local_matches = database.query_releases(category=category, search=search, limit=15, origin=origin)
+            if local_matches['total'] < 15:
                 tracker_engine.search_tracker_by_query(search, category)
 
         data = database.query_releases(
@@ -462,12 +462,22 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         try:
             item_id = params.get("id", [""])[0]
             if not item_id:
-                self.send_error(400, "Missing id parameter")
+                self.send_json({"error": "Missing id parameter"})
                 return
 
-            item = database.get_release_by_id(item_id)
+            category = params.get("category", [None])[0]
+            item = database.get_release_by_id(item_id, category=category)
             if not item:
-                self.send_error(404, "Item not found")
+                try:
+                    tid_int = int(item_id)
+                    details = tracker_engine.parse_full_details(tid_int)
+                    if details:
+                        item = details
+                except Exception:
+                    pass
+
+            if not item:
+                self.send_json({"error": "Item not found"})
                 return
 
             log(f"🎬 [ОТКРЫТИЕ КАРТОЧКИ] #{item_id} «{item.get('title_ru')}» | {item.get('category')} | {item.get('quality')}", "INFO")
