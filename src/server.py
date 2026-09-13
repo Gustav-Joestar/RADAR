@@ -283,39 +283,50 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             log(f"⚡ [АВТО-ПОДГРУЗКА] Сканирование следующей порции трекера [{category}] (год: {year})...", "INFO")
             threading.Thread(target=tracker_engine.scan_next_tracker_page, args=(category, year), daemon=True).start()
             self.send_json({"status": "scanning", "category": category, "year": year})
+        elif path == "/api/log":
+            msg = data.get("msg", "")
+            lvl = data.get("level", "INFO")
+            if msg:
+                log(msg, lvl)
+            self.send_json({"status": "ok"})
+            return
         elif path == "/api/watchlist/add":
             tid = data.get("torrent_id")
+            cat = data.get("category")
             if tid:
-                database.add_to_watchlist(tid)
-                rel = database.get_release_by_id(tid)
-                t_name = rel.get("title_ru", tid) if rel else tid
+                database.add_to_watchlist(tid, category=cat)
+                rel = database.get_release_by_id(tid, category=cat)
+                t_name = (rel.get("title_ru") or rel.get("title") or tid) if rel else tid
                 log(f"💚 [БУДУ СМОТРЕТЬ] Добавлено: «{t_name}»", "SUCCESS")
                 self.send_json({"status": "ok", "torrent_id": tid})
             else:
                 self.send_error(400, "Missing torrent_id")
         elif path == "/api/watchlist/remove":
             tid = data.get("torrent_id")
+            cat = data.get("category")
             if tid:
-                database.remove_from_watchlist(tid)
+                database.remove_from_watchlist(tid, category=cat)
                 log(f"↩️ [БУДУ СМОТРЕТЬ] Удалено из списка: #{tid}", "INFO")
                 self.send_json({"status": "ok", "torrent_id": tid})
             else:
                 self.send_error(400, "Missing torrent_id")
         elif path == "/api/ignored/add":
             tid = data.get("torrent_id")
+            cat = data.get("category")
             if tid:
-                rel = database.get_release_by_id(tid)
-                t_name = rel.get("title_ru", tid) if rel else tid
-                database.add_to_ignored(tid)
+                rel = database.get_release_by_id(tid, category=cat)
+                t_name = (rel.get("title_ru") or rel.get("title") or tid) if rel else tid
+                database.add_to_ignored(tid, category=cat)
                 log(f"🚫 [НЕ БУДУ СМОТРЕТЬ] «{t_name}» скрыт (кэш очищен, сохранена краткая инфо)", "INFO")
                 self.send_json({"status": "ok", "torrent_id": tid})
             else:
                 self.send_error(400, "Missing torrent_id")
         elif path == "/api/ignored/restore":
             tid = data.get("torrent_id")
+            cat = data.get("category")
             if tid:
-                database.restore_from_ignored(tid)
-                log(f"↩️ [РАДАР] Фильм #{tid} возвращён из чёрного списка", "SUCCESS")
+                database.restore_from_ignored(tid, category=cat)
+                log(f"↩️ [РАДАР] Элемент #{tid} возвращён из чёрного списка", "SUCCESS")
                 self.send_json({"status": "ok", "torrent_id": tid})
             else:
                 self.send_error(400, "Missing torrent_id")
@@ -604,7 +615,7 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(content)
         except Exception as e:
-            logger.error(f"Error reading file {full_path}: {e}")
+            log(f"Error reading file {full_path}: {e}", "ERROR")
             self.send_error(500, "Internal Server Error")
 
     def serve_static(self, file_path):

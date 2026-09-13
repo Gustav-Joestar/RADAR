@@ -2020,3 +2020,16 @@ select:focus {
 .toolbar-series-hide-quality {
   display: none !important;
 }
+
+/* Repack Features Bulleted List */
+.repack-features-list {
+  color: var(--text-main);
+  margin-top: 8px;
+  padding-left: 20px;
+}
+.repack-features-list li {
+  margin-bottom: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #e2e8f0;
+}

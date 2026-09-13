@@ -2,6 +2,7 @@ import os
 import re
 import time
 import json
+import copy
 import urllib.parse
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -1371,7 +1372,11 @@ def parse_full_details(torrent_id):
             else:
                 poster_candidates.append(src)
 
-        full_text = details_table.text
+        # Clone details_table for text extraction to avoid polluting with nested tables (related torrents, files list)
+        table_for_text = copy.copy(details_table)
+        for sub_table in table_for_text.select('table'):
+            sub_table.decompose()
+        full_text = table_for_text.text
 
         def find_field(patterns):
             for pat in patterns:
@@ -1678,22 +1683,54 @@ def parse_full_details(torrent_id):
 
             elif cat == "games":
                 mc_critic, mc_user, oc_rating = extract_game_ratings(full_text)
-                for kw, auth in GAME_REPACKERS:
-                    if kw in f_lower:
-                        repack_auth = auth
-                        break
+
+                # 1. Author and format from title (Absolute Priority)
+                title_fmt, title_auth = extract_game_meta_from_title(update_data.get("title") or raw_title)
+                if title_auth:
+                    repack_auth = title_auth
+                if title_fmt:
+                    rel_format = title_fmt
+
+                # 2. Check metadata fields from page body if title did not specify
+                g_edition = find_field([r'Тип издания:\s*([^\n\r]+)', r'Edition type:\s*([^\n\r]+)'])
+                if g_edition:
+                    g_ed_lower = g_edition.lower()
+                    if "repack" in g_ed_lower:
+                        rel_format = "RePack"
+                    elif "portable" in g_ed_lower:
+                        rel_format = "Portable"
+                    elif any(k in g_ed_lower for k in ["пиратка", "лицензия", "steam-rip", "gog"]):
+                        rel_format = g_edition.strip()
+
+                if not repack_auth:
+                    # Look for explicit author signatures like '[Repack] by FitGirl' or 'RePack от <Author>'
+                    m_by = re.search(r'\[(?:RePack|Portable)\]\s+by\s+([a-zA-Z0-9_\-\.!]+)', full_text, re.I)
+                    if m_by:
+                        repack_auth = m_by.group(1).strip()
+                    else:
+                        m_ot = re.search(r'(?:RePack|сборк[а-я]*)\s+от\s+([a-zA-Z0-9_\-\.!]+)', full_text, re.I)
+                        if m_ot:
+                            repack_auth = m_ot.group(1).strip()
+
+                if not repack_auth:
+                    for kw, auth in GAME_REPACKERS:
+                        if kw in f_lower:
+                            repack_auth = auth
+                            break
+
                 if repack_auth == "InsaneRamZes":
                     rel_format = "Portable"
                 elif repack_auth == "FitGirl":
                     rel_format = "RePack"
-                elif "portable" in f_lower:
-                    rel_format = "Portable"
-                elif "repack" in f_lower:
-                    rel_format = "RePack"
-                elif "steam-rip" in f_lower or "steamrip" in f_lower:
-                    rel_format = "Steam-Rip"
-                elif "gog" in f_lower:
-                    rel_format = "GOG"
+                elif not rel_format:
+                    if "portable" in f_lower:
+                        rel_format = "Portable"
+                    elif "repack" in f_lower:
+                        rel_format = "RePack"
+                    elif "steam-rip" in f_lower or "steamrip" in f_lower:
+                        rel_format = "Steam-Rip"
+                    elif "gog" in f_lower:
+                        rel_format = "GOG"
 
                 m_crack = re.search(r'(?:Таблетка|Crack|Защита|Лекарство)\s*:\s*([^\n\r]+)', full_text, re.I)
                 if m_crack:
@@ -1709,9 +1746,16 @@ def parse_full_details(torrent_id):
                 m_req = re.search(r'(?:Системные требования|System requirements):\s*\n*(.*?)(?=\n\s*(?:' + STOP_GAME_FIELDS + r'|Описание|Скриншоты)\s*:?|\Z)', full_text, re.DOTALL | re.I)
                 if m_req:
                     sys_reqs = m_req.group(1).strip()[:1500]
-                m_feats = re.search(r'(?:Особенности репака|Особенности RePack|Особенности релиза|Особенности игры):\s*\n*(.*?)(?=\n\s*(?:Системные|Скриншоты|Описание)\s*:?|\Z)', full_text, re.DOTALL | re.I)
+
+                # Repack features extraction: priority on repack features
+                m_feats = re.search(r'(?:Особенности\s*(?:репака|RePack[а-я]*|релиза|сборки)|Repack\s*features)\s*:?\s*\n*(.*?)(?=\n\s*(?:Особенности\s*игры|Скриншоты|Системные|Инструкция|Запуск|Список|Таблетка|Crack|Скачать|Время\s*раздачи)\s*:?|\Z)', full_text, re.DOTALL | re.I)
                 if m_feats:
-                    repack_feats = m_feats.group(1).strip()[:1500]
+                    repack_feats = m_feats.group(1).strip()[:2000]
+                elif not repack_feats:
+                    # Fallback to general game features if repack features not present
+                    m_game_feats = re.search(r'(?:Особенности\s*игры|Game\s*features)\s*:?\s*\n*(.*?)(?=\n\s*(?:Скриншоты|Системные|Инструкция|Запуск|Список|Таблетка)\s*:?|\Z)', full_text, re.DOTALL | re.I)
+                    if m_game_feats:
+                        repack_feats = m_game_feats.group(1).strip()[:2000]
 
             elif cat == "software":
                 for kw, auth in SOFT_REPACKERS:

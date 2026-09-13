@@ -106,18 +106,39 @@ document.addEventListener('DOMContentLoaded', () => {
   const progressFill = document.getElementById('progress-fill');
 
   let progressTimer = null;
+  let currentProgressWidth = 0;
+  let isLoadingPage = false;
+
+  function logServerMessage(msg, level = 'SUCCESS') {
+    fetch('/api/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ msg, level })
+    }).then(() => pollLogs()).catch(() => {});
+  }
+
+  function setProgressWidth(targetWidth) {
+    if (!progressBar || !progressFill) return;
+    if (targetWidth > currentProgressWidth) {
+      currentProgressWidth = Math.min(100, Math.max(targetWidth, currentProgressWidth));
+      progressFill.style.width = `${currentProgressWidth}%`;
+    }
+  }
+
   function startLoadingProgress() {
     if (!progressBar || !progressFill) return;
     if (progressTimer) clearInterval(progressTimer);
+    isLoadingPage = true;
     progressBar.classList.add('active');
     progressBar.style.opacity = '1';
-    let currentWidth = 15;
-    progressFill.style.width = `${currentWidth}%`;
+    currentProgressWidth = 15;
+    progressFill.style.width = '15%';
+
     progressTimer = setInterval(() => {
-      if (currentWidth < 85) {
-        currentWidth += Math.random() * 8 + 4;
-        if (currentWidth > 85) currentWidth = 85;
-        progressFill.style.width = `${currentWidth}%`;
+      if (currentProgressWidth < 45) {
+        currentProgressWidth += Math.random() * 6 + 3;
+        if (currentProgressWidth > 45) currentProgressWidth = 45;
+        progressFill.style.width = `${currentProgressWidth}%`;
       }
     }, 180);
   }
@@ -128,14 +149,43 @@ document.addEventListener('DOMContentLoaded', () => {
       clearInterval(progressTimer);
       progressTimer = null;
     }
+    currentProgressWidth = 100;
     progressFill.style.width = '100%';
     setTimeout(() => {
       progressBar.style.opacity = '0';
       setTimeout(() => {
         progressBar.classList.remove('active');
         progressFill.style.width = '0%';
+        currentProgressWidth = 0;
       }, 350);
-    }, 200);
+    }, 280);
+  }
+
+  function appendLocalLog(msg, level = 'SUCCESS') {
+    if (!consoleLogFeed) return;
+    const now = new Date();
+    const timeStr = [now.getHours(), now.getMinutes(), now.getSeconds()].map(v => String(v).padStart(2, '0')).join(':');
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = `
+      <span class="log-time">[${timeStr}]</span>
+      <span class="log-level-${level}">[${level}]</span>
+      <span class="log-msg">${escapeHtml(msg)}</span>
+    `;
+    consoleLogFeed.appendChild(entry);
+    consoleLogFeed.scrollTop = consoleLogFeed.scrollHeight;
+  }
+
+  function completePageLoading() {
+    if (!isLoadingPage) return;
+    isLoadingPage = false;
+    appendLocalLog('🏁 Загрузка завершилась', 'SUCCESS');
+    logServerMessage('🏁 Загрузка завершилась', 'SUCCESS');
+    finishLoadingProgress();
+    if (consoleStatusText) {
+      const catTitle = getCategoryTitle(state.category);
+      consoleStatusText.textContent = `Каталог [${catTitle}]: Загрузка завершена`;
+    }
   }
 
   function getCategoryTitle(cat) {
@@ -878,7 +928,7 @@ document.addEventListener('DOMContentLoaded', () => {
         cardsGrid.style.display = 'grid';
         emptyState.style.display = 'none';
       }
-      finishLoadingProgress();
+      completePageLoading();
       return;
     }
 
@@ -908,24 +958,31 @@ document.addEventListener('DOMContentLoaded', () => {
           cardsGrid.style.display = 'none';
           emptyState.style.display = 'block';
           emptyState.querySelector('.empty-text').textContent = 'По вашему запросу ничего не найдено';
+          completePageLoading();
         } else {
           cardsGrid.style.display = 'grid';
           emptyState.style.display = 'none';
+          setProgressWidth(50);
         }
         consoleStatusText.textContent = `Каталог [${catTitle}]: ${data.total} релизов (${state.year === 'all' ? 'все годы' : `${state.year} г.`}, стр. ${data.page})`;
 
         // Live progressive fill: fill page smoothly up to limit (15) without blocking
         if (data.needs_fill && data.items.length < state.limit && !state.search && state.view === 'catalog') {
           startProgressiveFill(data.items.map(it => it.torrent_id), params);
+        } else if (data.items.length > 0) {
+          // If no cards need hydration, wrap up loading
+          setTimeout(() => {
+            if (!hydrationTimer && !progressiveFillTimer) {
+              completePageLoading();
+            }
+          }, 600);
         }
       })
       .catch(err => {
         if (!isSilent) {
           cardsGrid.innerHTML = `<div style="grid-column: 1/-1; color: #ef4444; padding: 40px; text-align: center;">Ошибка загрузки данных: ${err.message}</div>`;
         }
-      })
-      .finally(() => {
-        finishLoadingProgress();
+        completePageLoading();
       });
   }
 
@@ -984,6 +1041,7 @@ document.addEventListener('DOMContentLoaded', () => {
         .then(data => {
           if (!data || !data.items) return;
           let allDone = true;
+          let hydratedCount = 0;
 
           data.items.forEach(st => {
             const card = document.getElementById(`card-${st.torrent_id}`);
@@ -1044,11 +1102,21 @@ document.addEventListener('DOMContentLoaded', () => {
             );
 
             if (stillNeeds) allDone = false;
+            else hydratedCount++;
           });
 
-          if (allDone) {
+          const total = data.items.length;
+          if (total > 0) {
+            const hPct = 50 + Math.round((hydratedCount / total) * 45);
+            setProgressWidth(hPct);
+          }
+
+          if (allDone || attempts >= maxAttempts) {
             clearInterval(hydrationTimer);
             hydrationTimer = null;
+            if (!progressiveFillTimer) {
+              completePageLoading();
+            }
           }
         })
         .catch(() => {});
@@ -1178,10 +1246,21 @@ document.addEventListener('DOMContentLoaded', () => {
           }
 
           if (!data.done && knownIds.length < state.limit) {
+            setProgressWidth(50 + Math.round((knownIds.length / state.limit) * 20));
             progressiveFillTimer = setTimeout(pollNext, 1200);
+          } else {
+            stopProgressiveFill();
+            if (!hydrationTimer) {
+              completePageLoading();
+            }
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          stopProgressiveFill();
+          if (!hydrationTimer) {
+            completePageLoading();
+          }
+        });
     }
 
     progressiveFillTimer = setTimeout(pollNext, 1000);
@@ -1293,10 +1372,10 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       hoverActionsHtml = `
         <div class="card-hover-actions">
-          <button class="btn-card-action btn-card-watch" onclick="event.stopPropagation(); addToWatchlist('${item.torrent_id}', '${escapedTitle}')">
+          <button class="btn-card-action btn-card-watch" onclick="event.stopPropagation(); addToWatchlist('${item.torrent_id}', '${escapedTitle}', '${(item.title || '').replace(/'/g, "\\'")}');">
             💚 Заинтересовало
           </button>
-          <button class="btn-card-action btn-card-ignore" onclick="event.stopPropagation(); addToIgnored('${item.torrent_id}', '${escapedTitle}')">
+          <button class="btn-card-action btn-card-ignore" onclick="event.stopPropagation(); addToIgnored('${item.torrent_id}', '${escapedTitle}', '${(item.title || '').replace(/'/g, "\\'")}');">
             🚫 Хрень
           </button>
         </div>
@@ -1417,48 +1496,64 @@ document.addEventListener('DOMContentLoaded', () => {
     }).join('');
   }
 
-  // -------------------------------------------------------------
-  // Watchlist & Ignored Actions (Strict Category Isolation)
-  // -------------------------------------------------------------
-  window.addToWatchlist = function(torrentId, titleRu) {
-    const cleanTitle = (titleRu || '').trim().toLowerCase();
+  function removeCardFromDOM(torrentId, titleRu, extraTitle) {
+    const cleanRu = (titleRu || '').trim().toLowerCase();
+    const cleanExtra = (extraTitle || '').trim().toLowerCase();
     const cards = document.querySelectorAll('.media-card');
     cards.forEach(c => {
-      if (c.id === `card-${torrentId}` || (cleanTitle && c.dataset.titleRu === cleanTitle)) {
+      const cId = c.id;
+      const cTitle = (c.dataset.titleRu || '').trim().toLowerCase();
+      const cMain = (c.querySelector('.card-title')?.textContent || '').trim().toLowerCase();
+      const isMatch = (cId === `card-${torrentId}`) ||
+        (cleanRu && (cTitle === cleanRu || cMain === cleanRu)) ||
+        (cleanExtra && (cTitle === cleanExtra || cMain === cleanExtra));
+      if (isMatch) {
         c.classList.add('card-removing');
         setTimeout(() => c.remove(), 260);
       }
     });
+  }
+
+  window.addToWatchlist = function(torrentId, titleRu, extraTitle) {
+    SESSION_PAGE_CACHE.clear();
+    removeCardFromDOM(torrentId, titleRu, extraTitle);
     fetch('/api/watchlist/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ torrent_id: torrentId })
+      body: JSON.stringify({ torrent_id: torrentId, category: state.category })
     })
     .then(r => r.json())
-    .then(() => updateCounts())
+    .then(() => {
+      updateCounts();
+      const remaining = document.querySelectorAll('.media-card:not(.card-removing)').length;
+      if (remaining < 8 && state.view === 'catalog') {
+        fetchReleases(true);
+      }
+    })
     .catch(() => {});
   };
 
-  window.addToIgnored = function(torrentId, titleRu) {
-    const cleanTitle = (titleRu || '').trim().toLowerCase();
-    const cards = document.querySelectorAll('.media-card');
-    cards.forEach(c => {
-      if (c.id === `card-${torrentId}` || (cleanTitle && c.dataset.titleRu === cleanTitle)) {
-        c.classList.add('card-removing');
-        setTimeout(() => c.remove(), 260);
-      }
-    });
+  window.addToIgnored = function(torrentId, titleRu, extraTitle) {
+    SESSION_PAGE_CACHE.clear();
+    removeCardFromDOM(torrentId, titleRu, extraTitle);
     fetch('/api/ignored/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ torrent_id: torrentId })
+      body: JSON.stringify({ torrent_id: torrentId, category: state.category })
     })
     .then(r => r.json())
-    .then(() => updateCounts())
+    .then(() => {
+      updateCounts();
+      const remaining = document.querySelectorAll('.media-card:not(.card-removing)').length;
+      if (remaining < 8 && state.view === 'catalog') {
+        fetchReleases(true);
+      }
+    })
     .catch(() => {});
   };
 
   window.removeFromWatchlist = function(torrentId) {
+    SESSION_PAGE_CACHE.clear();
     const card = document.getElementById(`card-${torrentId}`);
     if (card) {
       card.classList.add('card-removing');
@@ -1467,7 +1562,7 @@ document.addEventListener('DOMContentLoaded', () => {
     fetch('/api/watchlist/remove', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ torrent_id: torrentId })
+      body: JSON.stringify({ torrent_id: torrentId, category: state.category })
     })
     .then(r => r.json())
     .then(() => updateCounts())
@@ -1475,6 +1570,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   window.restoreFromIgnored = function(torrentId) {
+    SESSION_PAGE_CACHE.clear();
     const row = document.getElementById(`row-ign-${torrentId}`);
     if (row) {
       row.style.opacity = '0';
@@ -1483,7 +1579,7 @@ document.addEventListener('DOMContentLoaded', () => {
     fetch('/api/ignored/restore', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ torrent_id: torrentId })
+      body: JSON.stringify({ torrent_id: torrentId, category: state.category })
     })
     .then(r => r.json())
     .then(() => updateCounts())
@@ -1871,6 +1967,27 @@ document.addEventListener('DOMContentLoaded', () => {
       `
       : '';
 
+  function formatRepackFeatures(text) {
+    if (!text) return '';
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    let listItems = [];
+    let footers = [];
+    for (const line of lines) {
+      if (/^\[.*\]\s*by/i.test(line) || /^by\s+[a-zA-Z]/i.test(line) || /^[—\-–]\s*FitGirl/i.test(line) || /^\(c\)\s*/i.test(line)) {
+        footers.push(`<div style="margin-top: 10px; font-weight: 600; color: var(--accent);">${escapeHtml(line)}</div>`);
+      } else {
+        const clean = line.replace(/^[•\-\*\+]\s*/, '').trim();
+        if (clean) {
+          listItems.push(`<li style="margin-bottom: 5px; color: var(--text-main); font-size: 13px; line-height: 1.5;">${escapeHtml(clean)}</li>`);
+        }
+      }
+    }
+    const listHtml = listItems.length > 0
+      ? `<ul class="repack-features-list" style="margin: 8px 0 0 0; padding-left: 20px; line-height: 1.6; list-style-type: disc;">${listItems.join('')}</ul>`
+      : '';
+    return listHtml + footers.join('');
+  }
+
     let spoilersHtml = '';
 
     if (category === 'movies') {
@@ -1963,8 +2080,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <details class="modal-spoiler">
             <summary>📦 Особенности репака / релиза</summary>
             <div class="modal-spoiler-content">
-              ${item.repack_author ? `<div class="meta-highlight-box"><h4>Релиз от: ${escapeHtml(item.repack_author)}</h4>Таблетка / Лекарство: <strong>${escapeHtml(item.crack_status || 'Вшито')}</strong></div>` : ''}
-              ${item.repack_features ? `<p class="synopsis-text" style="white-space: pre-line;">${escapeHtml(item.repack_features)}</p>` : ''}
+              ${item.repack_author ? `<div class="meta-highlight-box" style="margin-bottom: 10px;"><h4>Релиз от: ${escapeHtml(item.repack_author)}</h4>Таблетка / Лекарство: <strong>${escapeHtml(item.crack_status || 'Вшито')}</strong></div>` : ''}
+              ${item.repack_features ? formatRepackFeatures(item.repack_features) : ''}
             </div>
           </details>
         ` : ''}
@@ -1985,8 +2102,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <details class="modal-spoiler">
             <summary>📦 Особенности сборки / репака</summary>
             <div class="modal-spoiler-content">
-              ${item.repack_author ? `<div class="meta-highlight-box"><h4>Автор сборки: ${escapeHtml(item.repack_author)}</h4>Категория: <strong>${escapeHtml(item.software_category || 'ПО')}</strong></div>` : ''}
-              ${item.repack_features ? `<p class="synopsis-text" style="white-space: pre-line;">${escapeHtml(item.repack_features)}</p>` : ''}
+              ${item.repack_author ? `<div class="meta-highlight-box" style="margin-bottom: 10px;"><h4>Автор сборки: ${escapeHtml(item.repack_author)}</h4>Категория: <strong>${escapeHtml(item.software_category || 'ПО')}</strong></div>` : ''}
+              ${item.repack_features ? formatRepackFeatures(item.repack_features) : ''}
             </div>
           </details>
         ` : ''}
@@ -2072,10 +2189,10 @@ document.addEventListener('DOMContentLoaded', () => {
         
         <!-- Modal Quick Actions -->
         <div style="display: flex; gap: 8px; margin: 10px 0;">
-          <button class="btn-card-action btn-card-watch" style="flex:1;" onclick="addToWatchlist('${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\")}'); closeModal();">
+          <button class="btn-card-action btn-card-watch" style="flex:1;" onclick="addToWatchlist('${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\'")}', '${(item.title || modalDisplayTitle || '').replace(/'/g, "\\")}'); closeModal();">
             💚 Заинтересовало
           </button>
-          <button class="btn-card-action btn-card-ignore" style="flex:1;" onclick="addToIgnored('${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\")}'); closeModal();">
+          <button class="btn-card-action btn-card-ignore" style="flex:1;" onclick="addToIgnored('${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\'")}', '${(item.title || modalDisplayTitle || '').replace(/'/g, "\\")}'); closeModal();">
             🚫 Хрень
           </button>
         </div>

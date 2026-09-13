@@ -611,21 +611,34 @@ def query_releases(
         params.append(category)
 
     # Exclude items marked 'ignored' or in watchlist
+    conditions.append("releases.user_status NOT IN ('watchlist', 'ignored', 'watchlist_alt', 'ignored_alt')")
     conditions.append("""
         NOT EXISTS (
             SELECT 1 FROM ignored_releases ig 
-            WHERE ig.category = ? AND ig.title_ru IS NOT NULL AND ig.year IS NOT NULL 
-              AND lower(trim(ig.title_ru)) = lower(trim(releases.title_ru)) 
-              AND ig.year = releases.year
+            WHERE ig.torrent_id = releases.torrent_id
+               OR (
+                   ig.category = ? 
+                   AND (
+                       (ig.title_ru IS NOT NULL AND releases.title_ru IS NOT NULL AND ig.title_ru != '' AND lower(trim(ig.title_ru)) = lower(trim(releases.title_ru)))
+                       OR (ig.title IS NOT NULL AND releases.title IS NOT NULL AND ig.title != '' AND lower(trim(ig.title)) = lower(trim(releases.title)))
+                   )
+                   AND (ig.year = releases.year OR ig.year = 0 OR releases.year = 0)
+               )
         )
     """)
     params.append(category)
     conditions.append("""
         NOT EXISTS (
             SELECT 1 FROM watchlist_releases wl 
-            WHERE wl.category = ? AND wl.title_ru IS NOT NULL AND wl.year IS NOT NULL 
-              AND lower(trim(wl.title_ru)) = lower(trim(releases.title_ru)) 
-              AND wl.year = releases.year
+            WHERE wl.torrent_id = releases.torrent_id
+               OR (
+                   wl.category = ? 
+                   AND (
+                       (wl.title_ru IS NOT NULL AND releases.title_ru IS NOT NULL AND wl.title_ru != '' AND lower(trim(wl.title_ru)) = lower(trim(releases.title_ru)))
+                       OR (wl.title IS NOT NULL AND releases.title IS NOT NULL AND wl.title != '' AND lower(trim(wl.title)) = lower(trim(releases.title)))
+                   )
+                   AND (wl.year = releases.year OR wl.year = 0 OR releases.year = 0)
+               )
         )
     """)
     params.append(category)
@@ -875,11 +888,19 @@ def add_to_watchlist(torrent_id, category=None):
         ))
         c.execute("UPDATE releases SET user_status = 'watchlist', updated_at = ? WHERE torrent_id = ?",
                   (now, str(torrent_id)))
-        if rel.get('title_ru'):
+        t_ru = rel.get('title_ru')
+        t_raw = rel.get('title')
+        yr = rel.get('year', 0)
+        if t_ru:
             c.execute("""
                 UPDATE releases SET user_status = 'watchlist_alt', updated_at = ?
                 WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND torrent_id != ?
-            """, (now, rel['title_ru'], rel.get('year', 0), str(torrent_id)))
+            """, (now, t_ru, yr, str(torrent_id)))
+        if t_raw:
+            c.execute("""
+                UPDATE releases SET user_status = 'watchlist_alt', updated_at = ?
+                WHERE lower(trim(title)) = lower(trim(?)) AND torrent_id != ?
+            """, (now, t_raw, str(torrent_id)))
     else:
         c.execute("""
             INSERT OR IGNORE INTO watchlist_releases (torrent_id, category, created_at) VALUES (?, ?, ?)
@@ -1001,11 +1022,17 @@ def add_to_ignored(torrent_id, category=None):
         ))
         c.execute("UPDATE releases SET user_status = 'ignored', updated_at = ? WHERE torrent_id = ?",
                   (now, str(torrent_id)))
+        t_raw = rel.get('title')
         if title_ru:
             c.execute("""
                 UPDATE releases SET user_status = 'ignored_alt', updated_at = ?
                 WHERE lower(trim(title_ru)) = lower(trim(?)) AND year = ? AND torrent_id != ?
             """, (now, title_ru, year, str(torrent_id)))
+        if t_raw:
+            c.execute("""
+                UPDATE releases SET user_status = 'ignored_alt', updated_at = ?
+                WHERE lower(trim(title)) = lower(trim(?)) AND torrent_id != ?
+            """, (now, t_raw, str(torrent_id)))
         
         # Free session cache storage
         c.execute("""
