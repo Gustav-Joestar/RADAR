@@ -94,6 +94,8 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             self.handle_api_cards_status(params)
         elif path == "/api/item":
             self.handle_api_item(params)
+        elif path == "/api/series_season_torrents":
+            self.handle_api_series_season_torrents(params)
         elif path == "/api/watchlist":
             category = params.get("category", ["all"])[0]
             search = params.get("search", [""])[0]
@@ -255,6 +257,25 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(404, "Not Found")
 
+    def handle_api_series_season_torrents(self, params):
+        title = params.get("title", [""])[0].strip()
+        season_str = params.get("season", ["1"])[0].strip()
+        season = int(season_str) if season_str.isdigit() else 1
+        title_en = params.get("title_en", [""])[0].strip()
+        
+        releases = database.query_season_releases(title, season)
+        
+        # If fewer than 2 releases found in local DB, search on tracker on-demand
+        if len(releases) < 2 and title:
+            search_term = f"{title} сезон {season}"
+            log(f"🔍 [СЕЗОНЫ] Точечный поиск раздач трекера: «{search_term}»...", "INFO")
+            tracker_engine.search_tracker_by_query(search_term, "series")
+            if title_en and len(title_en) > 2:
+                tracker_engine.search_tracker_by_query(f"{title_en} season {season}", "series")
+            releases = database.query_season_releases(title, season)
+            
+        self.send_json({"items": releases, "season": season, "title": title})
+
     def handle_api_items(self, params):
         category = params.get("category", ["movies"])[0]
         min_rating = float(params.get("min_rating", ["0.0"])[0])
@@ -323,45 +344,11 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
 
         # In discovery feed without search, ensure requested page is filled up to `limit`
         if not search and len(data["items"]) < limit:
-            conn = database.get_connection()
-            c = conn.cursor()
-            origin_filter = ""
-            if origin == "russian":
-                origin_filter = "AND (country LIKE '%Россия%' OR country LIKE '%СССР%' OR country LIKE '%РФ%')"
-            elif origin == "foreign" and category in ("movies", "series"):
-                origin_filter = "AND (country != '' OR title_en != '' OR title LIKE '%/%') AND country NOT LIKE '%Россия%' AND country NOT LIKE '%СССР%' AND country NOT LIKE '%РФ%'"
-
-            needed = max(limit - len(data["items"]), 5)
-            c.execute(f"""
-                SELECT torrent_id FROM releases 
-                WHERE category = ?
-                  AND (description IS NULL OR description = '')
-                  {origin_filter}
-                ORDER BY date_ts DESC LIMIT ?
-            """, (category, needed * 2))
-            unparsed = [r["torrent_id"] for r in c.fetchall()]
-            conn.close()
-            if unparsed:
-                from concurrent.futures import ThreadPoolExecutor
-                with ThreadPoolExecutor(max_workers=8) as executor:
-                    list(executor.map(tracker_engine.parse_full_details, unparsed))
-                data = database.query_releases(
-                    category=category, min_rating=min_rating,
-                    max_size=max_size, qualities=qualities, genre=genre,
-                    year=year, search=search, page=page, limit=limit,
-                    deduplicate=True, origin=origin,
-                    streaming=streaming, voiceover=voiceover, ongoing=ongoing,
-                    has_subtitles=has_subtitles, anime_type=anime_type,
-                    repack_author=repack_author, release_format=release_format,
-                    crack_status=crack_status, software_category=software_category
-                )
-
-            # If still fewer than limit (e.g. on page 2, 3... or DB ran out of unparsed), crawl next tracker pages in a loop
             crawl_attempts = 0
             while len(data["items"]) < limit and crawl_attempts < 4:
                 crawl_attempts += 1
                 y_scan = int(year) if str(year).isdigit() else 0
-                log(f"📡 [РАДАР] Недостаточно релизов для стр. {page} ({len(data['items'])}/{limit}). Подгрузка с трекера (попытка {crawl_attempts})...", "INFO")
+                log(f"📡 [РАДАР] Добор релизов трекера для стр. {page} ({len(data['items'])}/{limit})...", "INFO")
                 tracker_engine.scan_next_tracker_page(category, y_scan)
                 data = database.query_releases(
                     category=category, min_rating=min_rating,
@@ -378,21 +365,7 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
         if not search:
             data["pages"] = max(data["pages"], page + 1)
 
-        # Launch background resolution for any items missing details, ratings or posters
-        to_hydrate = [
-            it["torrent_id"] for it in data["items"]
-            if (category in ("movies", "series") and it.get("kp_rating", 0) == 0 and it.get("imdb_rating", 0) == 0)
-            or (category == "anime" and it.get("shikimori_rating", 0) == 0)
-            or (category == "games" and it.get("metacritic_critic", 0) == 0 and not it.get("system_reqs"))
-            or not it.get("poster_url")
-            or (not it.get("description") and not it.get("video_info") and not it.get("system_reqs"))
-        ]
-        if to_hydrate:
-            threading.Thread(
-                target=lambda ids: [tracker_engine.parse_full_details(tid) for tid in ids],
-                args=(to_hydrate,),
-                daemon=True
-            ).start()
+        # Strict on-demand architecture: full details/descriptions are fetched ONLY when a card is clicked.
 
         log(f"✅ [РАДАР] Итого: {data['total']} релизов (выведено {len(data['items'])} на стр. {page})", "SUCCESS")
         self.send_json(data)
@@ -441,7 +414,8 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             if not tids:
                 self.send_json({"items": []})
                 return
-            conn = database.get_connection()
+            category = params.get("category", ["movies"])[0]
+            conn = database.get_connection(category)
             c = conn.cursor()
             placeholders = ",".join(["?"] * len(tids))
             c.execute(f"""

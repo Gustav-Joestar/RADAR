@@ -48,7 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
   ];
 
   const ANIME_TYPES = [
-    'all', 'TV-сериал', 'Полнометражный фильм', 'OVA', 'ONA'
+    'all', 'TV-сериал', 'Полнометражный фильм'
   ];
 
   const ANIME_STUDIOS = [
@@ -298,15 +298,8 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
     } else if (cat === 'series') {
-      row1 += `
-        <div class="filter-group quality-group">
-          <label>Качество:</label>
-          <label class="checkbox-label"><input type="checkbox" id="q-less720p" ${state.qualities.includes('<720p') ? 'checked' : ''} value="<720p">&lt; 720p</label>
-          <label class="checkbox-label"><input type="checkbox" id="q-720p" ${state.qualities.includes('720p') ? 'checked' : ''} value="720p">720p</label>
-          <label class="checkbox-label"><input type="checkbox" id="q-1080p" ${state.qualities.includes('1080p') ? 'checked' : ''} value="1080p">1080p</label>
-          <label class="checkbox-label"><input type="checkbox" id="q-4k" ${state.qualities.includes('4K') ? 'checked' : ''} value="4K">4K</label>
-        </div>
-      `;
+      // Quality filter removed for series: qualities are selected per-release in the season tabs
+      row1 += '';
     } else if (cat === 'anime') {
       row1 += `
         <div class="filter-group quality-group">
@@ -985,7 +978,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      fetch(`/api/cards_status?ids=${torrentIds.join(',')}`)
+      fetch(`/api/cards_status?ids=${torrentIds.join(',')}&category=${state.category}`)
         .then(res => res.json())
         .then(data => {
           if (!data || !data.items) return;
@@ -1113,6 +1106,30 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------
+
+  function cleanSeriesTitle(title, title_ru) {
+    let t = title_ru || title || '';
+    if (t.includes('/')) t = t.split('/')[0].trim();
+    // 1. Remove bracketed patterns [ ... ]
+    t = t.replace(/\[.*?\]/g, '');
+    // 2. Remove parentheses with season/episodes/repack/years
+    t = t.replace(/\([^)]*(?:сезон|сери|s\d+|г\.|20\d\d|19\d\d)[^)]*\)/gi, '');
+    // 3. Remove standalone season/episode mentions
+    t = t.replace(/\b(?:\d+\s*сезон|сезон\s*\d+|\d+x\d+|s\d+)\b/gi, '');
+    // 4. Remove trailing punctuation, dashes, spaces
+    t = t.replace(/[\s\-–—:]+$/g, '').trim();
+    return t || title_ru || title || '';
+  }
+
+  function cleanOrigTitle(title_en) {
+    let t = title_en || '';
+    t = t.replace(/\[.*?\]/g, '');
+    t = t.replace(/\([^)]*(?:season|s\d+|episodes?|20\d\d|19\d\d)[^)]*\)/gi, '');
+    t = t.replace(/\b(?:season\s*\d+|\d+\s*season|s\d+e\d+|\d+x\d+)\b/gi, '');
+    t = t.replace(/[\s\-–—:]+$/g, '').trim();
+    return t;
+  }
+
   // Cards Rendering
   // -------------------------------------------------------------
   function renderCards(items, isWatchlistView = false) {
@@ -1126,7 +1143,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const isSeriesOrAnimeSeries = item.category === 'series' || (item.category === 'anime' && item.anime_type !== 'Полнометражный фильм');
 
-      const escapedTitle = (item.title_ru || '').replace(/'/g, "\\'");
+      let displayTitle = item.title_ru || item.title || '';
+      let displayOrig = '';
+      if (item.category === 'series' || state.category === 'series') {
+        displayTitle = cleanSeriesTitle(item.title, item.title_ru);
+        displayOrig = cleanOrigTitle(item.title_en);
+      }
+
+      const escapedTitle = (displayTitle || item.title_ru || '').replace(/'/g, "\\'");
       const escapedEn = (item.title_en || '').replace(/'/g, "\\'");
 
       const posterHtml = item.poster_url 
@@ -1246,8 +1270,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="card-ratings-wrap">${ratingBadges}</div>
         </div>
         <div class="card-content">
-          <h3 class="card-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title_ru)}</h3>
-          <div class="card-orig">${escapeHtml(subTitleText)}</div>
+          <h3 class="card-title" title="${escapeHtml(item.title)}">${escapeHtml(displayTitle)}</h3>
+          <div class="card-orig">${escapeHtml(displayOrig ? (displayOrig + (item.year ? ' · ' + item.year : '')) : subTitleText)}</div>
           ${genreHtml}
           ${countryHtml}
           ${metaRowHtml}
@@ -1457,6 +1481,12 @@ document.addEventListener('DOMContentLoaded', () => {
   function openModal(torrentId) {
     modalOverlay.style.display = 'flex';
     modalContent.innerHTML = `
+      <div class="modal-loading-overlay" id="modal-blur-overlay">
+        <div class="shimmer-pulse-badge">
+          <div class="spinner-neon"></div>
+          <span>Загрузка данных раздачи...</span>
+        </div>
+      </div>
       <div class="modal-skeleton-layout">
         <div class="modal-skeleton-poster skeleton"></div>
         <div class="modal-skeleton-body">
@@ -1479,7 +1509,7 @@ document.addEventListener('DOMContentLoaded', () => {
       .then(res => res.json())
       .then(item => renderModalDetails(item))
       .catch(err => {
-        modalContent.innerHTML = `<div style="color: #ef4444; padding: 40px;">Ошибка загрузки деталей: ${err.message}</div>`;
+        modalContent.innerHTML = `<div style="color: #ef4444; padding: 40px; text-align: center;">Ошибка загрузки деталей: ${escapeHtml(err.message)}</div>`;
       });
   }
 
@@ -1513,13 +1543,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // 1. Screenshots Spoiler (Strict On-Demand, default closed)
     const screenshotsSpoilerHtml = (screenshots && screenshots.length > 0)
       ? `
-        <details class="modal-spoiler">
+        <details class="modal-spoiler" id="screenshots-spoiler">
           <summary>🖼️ Кадры и скриншоты (${screenshots.length})</summary>
           <div class="modal-spoiler-content">
             <div class="screenshots-gallery">
               ${screenshots.map(url => `
                 <div class="screen-thumb-wrap" onclick="window.open('${escapeHtml(url)}', '_blank')">
-                  <img class="screen-thumb-img" src="${escapeHtml(url)}" loading="lazy" alt="Скриншот" onerror="this.parentElement.style.display='none';" />
+                  <img class="screen-thumb-img lazy-screen" data-src="${escapeHtml(url)}" alt="Скриншот" onerror="this.parentElement.style.display='none';" />
                 </div>
               `).join('')}
             </div>
@@ -1616,6 +1646,30 @@ document.addEventListener('DOMContentLoaded', () => {
         ${alternativesSpoilerHtml}
       `;
     } else if (category === 'series') {
+      const cleanSeriesName = cleanSeriesTitle(item.title, item.title_ru);
+      const maxSeason = Math.max(item.seasons_count || 1, 1);
+      
+      const seasonsTabsBlockHtml = `
+        <div class="season-tabs-section" style="margin-top: 20px;">
+          <h4 style="margin: 0 0 10px 0; color: var(--accent); font-size: 14px; font-weight: 700; letter-spacing: 0.5px;">
+            📺 СЕЗОНЫ И РАЗДАЧИ
+          </h4>
+          <div class="season-tabs-container" id="season-tabs-bar">
+            ${Array.from({length: maxSeason}, (_, i) => i + 1).map(sNum => `
+              <button class="season-tab-btn ${sNum === maxSeason ? 'active' : ''}" data-season="${sNum}">
+                Сезон ${sNum}
+              </button>
+            `).join('')}
+          </div>
+          <div id="season-releases-list" class="season-releases-wrap">
+            <div style="padding: 24px; text-align: center; color: var(--text-muted);">
+              <div class="spinner-neon" style="display: inline-block; margin-bottom: 8px;"></div>
+              <div>Поиск раздач Сезона ${maxSeason}...</div>
+            </div>
+          </div>
+        </div>
+      `;
+
       spoilersHtml = `
         ${item.description ? `
           <details class="modal-spoiler">
@@ -1633,7 +1687,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ${audioSubsBlockHtml}
           </div>
         </details>
-        ${alternativesSpoilerHtml}
+        ${seasonsTabsBlockHtml}
       `;
     } else if (category === 'anime') {
       spoilersHtml = `
@@ -1650,13 +1704,6 @@ document.addEventListener('DOMContentLoaded', () => {
           <summary>🎙️ Озвучка и субтитры</summary>
           <div class="modal-spoiler-content">
             ${audioSubsBlockHtml}
-          </div>
-        </details>
-        <details class="modal-spoiler">
-          <summary>🔊 Инфо о видео и звуке</summary>
-          <div class="modal-spoiler-content">
-            ${item.video_info ? `<div style="margin-bottom: 10px; font-family: monospace; font-size: 12px;"><strong>Видео:</strong> ${escapeHtml(item.video_info)}</div>` : ''}
-            ${item.audio_info ? `<div style="font-size: 13px;"><strong>Звук:</strong> ${escapeHtml(item.audio_info)}</div>` : ''}
           </div>
         </details>
         ${alternativesSpoilerHtml}
@@ -1807,9 +1854,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       <div class="modal-right">
         <div>
-          <h2 class="modal-title-h2">${escapeHtml(item.title_ru)}</h2>
+          <h2 class="modal-title-h2">${escapeHtml(category === 'series' ? cleanSeriesTitle(item.title, item.title_ru) : item.title_ru)}</h2>
           <div class="modal-orig-sub">
-            ${item.title_en ? `${escapeHtml(item.title_en)} · ` : ''}${item.year || ''}
+            ${item.title_en ? `${escapeHtml(cleanOrigTitle(item.title_en))} · ` : ''}${item.year || ''}
           </div>
         </div>
 
@@ -1831,6 +1878,38 @@ document.addEventListener('DOMContentLoaded', () => {
         ${spoilersHtml}
       </div>
     `;
+
+    // Lazy-load screenshots strictly on spoiler open
+    const screenSpoiler = modalContent.querySelector('#screenshots-spoiler');
+    if (screenSpoiler) {
+      screenSpoiler.addEventListener('toggle', () => {
+        if (screenSpoiler.open) {
+          screenSpoiler.querySelectorAll('img.lazy-screen[data-src]').forEach(img => {
+            img.src = img.dataset.src;
+            img.removeAttribute('data-src');
+          });
+        }
+      }, { once: true });
+    }
+
+    // Series Season Tabs setup and on-demand search
+    if (category === 'series') {
+      const cleanSeriesName = cleanSeriesTitle(item.title, item.title_ru);
+      const maxSeason = Math.max(item.seasons_count || 1, 1);
+      const tabsBar = modalContent.querySelector('#season-tabs-bar');
+      if (tabsBar) {
+        const tabBtns = tabsBar.querySelectorAll('.season-tab-btn');
+        tabBtns.forEach(btn => {
+          btn.addEventListener('click', () => {
+            tabBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const sNum = parseInt(btn.dataset.season) || 1;
+            loadSeasonTorrents(cleanSeriesName, sNum, item.title_en);
+          });
+        });
+        loadSeasonTorrents(cleanSeriesName, maxSeason, item.title_en);
+      }
+    }
 
     // Attach lazy loader to alternatives spoiler if present
     const altSpoiler = modalContent.querySelector('#alternatives-spoiler');
@@ -1887,3 +1966,100 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
+
+
+  function loadSeasonTorrents(cleanTitle, seasonNum, titleEn) {
+    const container = document.getElementById('season-releases-list');
+    if (!container) return;
+    container.innerHTML = `
+      <div style="padding: 24px; text-align: center; color: var(--text-muted);">
+        <div class="spinner-neon" style="display: inline-block; margin-bottom: 8px;"></div>
+        <div>Поиск раздач Сезона ${seasonNum}...</div>
+      </div>
+    `;
+
+    fetch(`/api/series_season_torrents?title=${encodeURIComponent(cleanTitle)}&season=${seasonNum}&title_en=${encodeURIComponent(titleEn || '')}`)
+      .then(res => res.json())
+      .then(data => {
+        if (!data.items || data.items.length === 0) {
+          container.innerHTML = `<div style="padding: 24px; text-align: center; color: var(--text-muted);">Раздачи для Сезона ${seasonNum} не найдены на трекере.</div>`;
+          return;
+        }
+
+        let rowsHtml = data.items.map(rel => {
+          const q = (rel.quality || '1080p').toLowerCase();
+          let qClass = 'q-low';
+          if (q.includes('1080')) qClass = 'q-1080p';
+          else if (q.includes('720')) qClass = 'q-720p';
+
+          let epStr = '';
+          if (rel.episodes_released && rel.episodes_total) {
+            const relPadded = String(rel.episodes_released).padStart(2, '0');
+            const totPadded = String(rel.episodes_total).padStart(2, '0');
+            epStr = `${relPadded} из ${totPadded}`;
+          } else {
+            const mEp = (rel.title || '').match(/(?:\[|\()?(?:\d+-)?(\d+)\s+из\s+(\d+)/i);
+            if (mEp) {
+              epStr = `${mEp[1].padStart(2, '0')} из ${mEp[2].padStart(2, '0')}`;
+            } else {
+              const mX = (rel.title || '').match(/\[\s*\d+x(?:\d+-)?(\d+)/i);
+              if (mX) {
+                epStr = `${mX[1].padStart(2, '0')} сер.`;
+              } else {
+                epStr = 'Все серии';
+              }
+            }
+          }
+
+          const isOngoing = rel.is_ongoing || (rel.episodes_released && rel.episodes_total && rel.episodes_released < rel.episodes_total);
+          const epBadgeClass = isOngoing ? 'season-episodes-badge ongoing' : 'season-episodes-badge';
+
+          const studio = rel.voice_studio || rel.voiceover || 'Оригинал / Не указано';
+          const hasSubs = rel.has_subtitles || (rel.subtitles && !rel.subtitles.includes('нет'));
+
+          const torrentUrl = rel.torrent_url || (rel.torrent_id ? `http://d.rutor.info/download/${rel.torrent_id}` : '#');
+          const magnetUrl = rel.magnet_url || (rel.torrent_id ? `magnet:?xt=urn:btih:...` : '#');
+
+          return `
+            <tr class="season-release-row">
+              <td style="width: 75px;">
+                <span class="season-badge-quality ${qClass}">${escapeHtml(rel.quality || '1080p')}</span>
+              </td>
+              <td style="width: 105px;">
+                <span class="${epBadgeClass}">${escapeHtml(epStr)}</span>
+              </td>
+              <td>
+                <div class="season-voiceover" title="${escapeHtml(studio)}">🎙️ ${escapeHtml(studio)}</div>
+              </td>
+              <td style="width: 110px;">
+                <span class="season-subs-tag ${hasSubs ? 'has-subs' : ''}">${hasSubs ? '📄 Сабы: Да' : '—'}</span>
+              </td>
+              <td style="width: 95px;">
+                <span class="season-size">💾 ${escapeHtml(rel.size_str || (rel.size_gb ? rel.size_gb + ' ГБ' : '—'))}</span>
+              </td>
+              <td style="width: 120px;">
+                <span class="season-seeds-peers">
+                  <span class="season-seeds">▲ ${rel.seeds || 0}</span>
+                  <span class="season-peers">▼ ${rel.peers || 0}</span>
+                </span>
+              </td>
+              <td style="width: 130px; text-align: right;">
+                <div class="season-row-actions">
+                  <a href="${torrentUrl}" class="btn-torrent-season" download title="Скачать торрент-файл">⬇ .torrent</a>
+                  ${magnetUrl && magnetUrl !== '#' ? `<a href="${magnetUrl}" class="btn-magnet-season" title="Magnet-ссылка">🧲</a>` : ''}
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+        container.innerHTML = `
+          <table class="season-releases-table">
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        `;
+      })
+      .catch(err => {
+        container.innerHTML = `<div style="padding: 20px; text-align: center; color: #ef4444;">Ошибка загрузки раздач: ${escapeHtml(err.message)}</div>`;
+      });
+  }

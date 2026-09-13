@@ -685,13 +685,8 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                         if kw in t_lower:
                             voice_studio_init = stud
                             break
-                    if any(w in t_lower for w in ["фильм", "movie"]):
-                        anime_type_init = "Полнометражный фильм"
-                        seasons_count_init = 0
-                    elif any(w in t_lower for w in ["ova", "ona"]):
-                        anime_type_init = "OVA / ONA"
-                        seasons_count_init = 1
-                    else:
+                    is_series_cue = bool(re.search(r'\[\s*\d+x|\b\d+\s*сезон|\bсерии?\s*\d+|\b\d+\s*из\s*\d+|s\d+e\d+|\[\d+-\d+\]', raw_title, re.I))
+                    if is_series_cue:
                         anime_type_init = "ТВ-сериал"
                         m_multi_s = re.search(r'(?:\[|\()(\d{1,2})-(\d{1,2})\s*сезон', raw_title, re.I)
                         if m_multi_s:
@@ -702,7 +697,12 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                                 seasons_count_init = int(m_single_s.group(1) or m_single_s.group(2) or m_single_s.group(3) or m_single_s.group(4) or 1)
                             else:
                                 seasons_count_init = 1
+                    elif any(w in raw_title.lower() for w in ["фильм", "movie", "полнометраж"]):
+                        anime_type_init = "Полнометражный фильм"
+                        seasons_count_init = 0
+                    else:
                         anime_type_init = "ТВ-сериал"
+                        seasons_count_init = 1
 
                 elif category_name == "games":
                     for kw, auth in GAME_REPACKERS:
@@ -810,13 +810,9 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
     cached_count = len(scanned_torrent_ids) - len(unique_titles_to_fetch)
     log(f"Категория [{category_name}]: {len(scanned_torrent_ids)} раздач найдено ({cached_count} из кэша, {len(unique_titles_to_fetch)} новых).", "INFO")
     
-    # Priority 1: Immediately fetch details, ratings and local posters for top candidates
-    candidates = unique_titles_to_fetch[:35]
-    if candidates:
-        log(f"⚡ [РЕЙТИНГИ И ОБЛОЖКИ] Загрузка данных и рейтингов для {len(candidates)} релизов витрины...", "INFO")
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            list(executor.map(parse_full_details, candidates))
-        log(f"✅ [РЕЙТИНГИ И ОБЛОЖКИ] Витрина первой страницы полностью готова!", "SUCCESS")
+    # Live speed optimization: Do not block scanner by fetching full details for 35 items.
+    # Details and screenshots will load on-demand when the user clicks a card.
+    log(f"⚡ [РАДАР] Витрина [{category_name}] готова мгновенно ({len(scanned_torrent_ids)} найдено).", "SUCCESS")
 
     log(f"Категория [{category_name}] полностью актуализирована!", "SUCCESS")
     return len(scanned_torrent_ids)
@@ -1456,10 +1452,12 @@ def parse_full_details(torrent_id):
                     if kw in f_lower:
                         voice_stud = stud
                         break
-                if any(w in f_lower for w in ["фильм", "movie"]):
+                raw_t = update_data.get("title", "")
+                is_series_cue = bool(re.search(r'\[\s*\d+x|\b\d+\s*сезон|\bсерии?\s*\d+|\b\d+\s*из\s*\d+|s\d+e\d+|\[\d+-\d+\]', raw_t, re.I))
+                if is_series_cue:
+                    anime_type_val = "ТВ-сериал"
+                elif any(w in raw_t.lower() for w in ["фильм", "movie", "полнометраж"]):
                     anime_type_val = "Полнометражный фильм"
-                elif any(w in f_lower for w in ["ova", "ona"]):
-                    anime_type_val = "OVA / ONA"
                 else:
                     anime_type_val = "ТВ-сериал"
                 shikimori_score, mal_score = fetch_shikimori_rating(t_ru, t_en)
