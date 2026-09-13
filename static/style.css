@@ -282,9 +282,20 @@ body {
   max-width: 1560px;
   margin: 0 auto;
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.toolbar-row {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
+  width: 100%;
+}
+
+.toolbar-row-secondary:empty {
+  display: none;
 }
 
 .filter-group {
@@ -1596,4 +1607,92 @@ select:focus {
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 6px;
+}
+
+/* Subcategory Navigation in Watchlist & Ignored */
+.subtabs-nav {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.subtab-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.subtab-btn:hover {
+  color: var(--text-main);
+  background: var(--bg-hover);
+}
+
+.subtab-btn.active {
+  background: rgba(0, 229, 163, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Games Metadata Box */
+.game-metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+
+.game-meta-item {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.game-meta-item strong {
+  color: var(--text-main);
+  display: block;
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.steam-rating-badge {
+  background: #1b2838;
+  border: 1px solid #66c0f4;
+  color: #66c0f4;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Lazy loading blur placeholder for alternative table cells */
+.cell-loading {
+  position: relative;
+  color: transparent !important;
+  user-select: none;
+}
+
+.cell-loading::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 4px;
+  bottom: 4px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 200% 100%;
+  animation: progressShimmer 1.5s infinite;
+  border-radius: 4px;
 }

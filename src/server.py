@@ -118,6 +118,25 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
             self.handle_api_genres(params)
         elif path == "/api/years":
             self.handle_api_years(params)
+        elif path == "/api/alternatives_details":
+            raw_ids = params.get("ids", [""])[0]
+            if not raw_ids:
+                self.send_json({"items": []})
+            else:
+                tids = [i.strip() for i in raw_ids.split(",") if i.strip()]
+                res = []
+                for tid in tids:
+                    rel = database.get_release_by_id(tid)
+                    if rel:
+                        if not rel.get("voiceover") and not rel.get("subtitles"):
+                            try:
+                                parsed = tracker_engine.parse_full_details(tid)
+                                if parsed:
+                                    rel = parsed
+                            except Exception:
+                                pass
+                        res.append(rel)
+                self.send_json({"items": res})
         elif path == "/api/heartbeat":
             global LAST_HEARTBEAT, HEARTBEAT_ACTIVE
             LAST_HEARTBEAT = time.time()
@@ -337,10 +356,12 @@ class RadarRequestHandler(BaseHTTPRequestHandler):
                     crack_status=crack_status, software_category=software_category
                 )
 
-            # If still fewer than limit (e.g. on page 2, 3... or DB ran out of unparsed), crawl next tracker page
-            if len(data["items"]) < limit:
+            # If still fewer than limit (e.g. on page 2, 3... or DB ran out of unparsed), crawl next tracker pages in a loop
+            crawl_attempts = 0
+            while len(data["items"]) < limit and crawl_attempts < 4:
+                crawl_attempts += 1
                 y_scan = int(year) if str(year).isdigit() else 0
-                log(f"📡 [РАДАР] Недостаточно релизов для стр. {page} ({len(data['items'])}/{limit}). Подгрузка с трекера...", "INFO")
+                log(f"📡 [РАДАР] Недостаточно релизов для стр. {page} ({len(data['items'])}/{limit}). Подгрузка с трекера (попытка {crawl_attempts})...", "INFO")
                 tracker_engine.scan_next_tracker_page(category, y_scan)
                 data = database.query_releases(
                     category=category, min_rating=min_rating,

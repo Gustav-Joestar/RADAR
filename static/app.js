@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const state = {
     category: 'movies', // 'movies', 'series', 'anime', 'games', 'software'
     view: 'catalog',    // 'catalog', 'watchlist', 'ignored'
+    curationSubcategory: 'all',
     year: 'all',
     min_rating: 0.0,
     max_size: 999.0,
@@ -164,8 +165,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const catKey = btn.dataset.category;
         if (catKey === 'watchlist') {
           state.view = 'watchlist';
+          state.curationSubcategory = 'all';
         } else if (catKey === 'ignored') {
           state.view = 'ignored';
+          state.curationSubcategory = 'all';
         } else {
           state.category = catKey;
           state.view = 'catalog';
@@ -237,7 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------
-  // Dynamic Category Filters Toolbar
+  // Dynamic Category Filters Toolbar — Two Stable Rows
   // -------------------------------------------------------------
   function renderCategoryToolbar() {
     if (!filtersContainer) return;
@@ -246,22 +249,34 @@ document.addEventListener('DOMContentLoaded', () => {
       const isWatch = state.view === 'watchlist';
       const label = isWatch ? 'Заинтересовало' : 'Хрень';
       filtersContainer.innerHTML = `
-        <div class="filter-group search-group" style="flex: 2; max-width: 460px;">
-          <span class="filter-icon">🔍</span>
-          <input type="text" id="search-input" placeholder="Поиск в «${label}» (${getCategoryTitle(state.category)})..." value="${escapeHtml(state.search)}" />
+        <div class="toolbar-row toolbar-row-primary">
+          <div class="filter-group search-group" style="flex: 2; max-width: 460px;">
+            <span class="filter-icon">🔍</span>
+            <input type="text" id="search-input" placeholder="Поиск в «${label}»..." value="${escapeHtml(state.search)}" />
+          </div>
+          <button id="btn-apply-filters" class="btn-primary btn-apply" title="Искать">🔍 Найти</button>
+          <button id="btn-reset-filters" class="btn-reset" title="Сбросить поиск">✕ Сброс</button>
         </div>
-        <button id="btn-apply-filters" class="btn-primary btn-apply" title="Искать">🔍 Найти</button>
-        <button id="btn-reset-filters" class="btn-reset" title="Сбросить поиск">✕ Сброс</button>
+        <div class="toolbar-row toolbar-row-secondary">
+          <div class="subtabs-nav" id="subtabs-nav">
+            <button class="subtab-btn ${state.curationSubcategory === 'all' ? 'active' : ''}" data-subcat="all">Все <span class="subtab-count" id="subtab-count-all"></span></button>
+            <button class="subtab-btn ${state.curationSubcategory === 'movies' ? 'active' : ''}" data-subcat="movies">Фильмы <span class="subtab-count" id="subtab-count-movies"></span></button>
+            <button class="subtab-btn ${state.curationSubcategory === 'series' ? 'active' : ''}" data-subcat="series">Сериалы <span class="subtab-count" id="subtab-count-series"></span></button>
+            <button class="subtab-btn ${state.curationSubcategory === 'anime' ? 'active' : ''}" data-subcat="anime">Аниме <span class="subtab-count" id="subtab-count-anime"></span></button>
+            <button class="subtab-btn ${state.curationSubcategory === 'games' ? 'active' : ''}" data-subcat="games">Игры <span class="subtab-count" id="subtab-count-games"></span></button>
+            <button class="subtab-btn ${state.curationSubcategory === 'software' ? 'active' : ''}" data-subcat="software">Программы <span class="subtab-count" id="subtab-count-software"></span></button>
+          </div>
+        </div>
       `;
       bindToolbarEvents();
+      updateCounts();
       return;
     }
 
-    let controlsHtml = '';
     const cat = state.category;
 
-    // Scan Tracker Button
-    controlsHtml += `
+    // Build Row 1: Common primary controls
+    let row1 = `
       <button id="btn-refresh" class="btn-refresh" title="Сканировать трекер и обновить базу данных">
         <span class="refresh-icon">🔄</span> Сканировать трекер
       </button>
@@ -269,50 +284,125 @@ document.addEventListener('DOMContentLoaded', () => {
         <span class="filter-icon">🔍</span>
         <input type="text" id="search-input" placeholder="${getSearchPlaceholder(cat)}" value="${escapeHtml(state.search)}" />
       </div>
-      <button id="btn-apply-filters" class="btn-primary btn-apply" title="Применить фильтры">🔍 Найти</button>
+      <button id="btn-apply-filters" class="btn-primary btn-apply" title="Применить выбранные фильтры и начать поиск">🔍 Найти</button>
     `;
 
+    // Row 1 Qualities
     if (cat === 'movies') {
-      controlsHtml += `
-        <!-- Quality Filter -->
+      row1 += `
         <div class="filter-group quality-group">
           <label>Качество:</label>
-          <label class="checkbox-label"><input type="checkbox" id="q-1080p" ${state.qualities.includes('1080p') ? 'checked' : ''} value="1080p"> 1080p</label>
-          <label class="checkbox-label"><input type="checkbox" id="q-720p" ${state.qualities.includes('720p') ? 'checked' : ''} value="720p"> 720p</label>
-          <label class="checkbox-label"><input type="checkbox" id="q-4k" ${state.qualities.includes('4K') ? 'checked' : ''} value="4K"> 4K</label>
+          <label class="checkbox-label"><input type="checkbox" id="q-less720p" ${state.qualities.includes('<720p') ? 'checked' : ''} value="<720p">&lt; 720p</label>
+          <label class="checkbox-label"><input type="checkbox" id="q-720p" ${state.qualities.includes('720p') ? 'checked' : ''} value="720p">720p</label>
+          <label class="checkbox-label"><input type="checkbox" id="q-1080p" ${state.qualities.includes('1080p') ? 'checked' : ''} value="1080p">1080p</label>
         </div>
+      `;
+    } else if (cat === 'series') {
+      row1 += `
+        <div class="filter-group quality-group">
+          <label>Качество:</label>
+          <label class="checkbox-label"><input type="checkbox" id="q-less720p" ${state.qualities.includes('<720p') ? 'checked' : ''} value="<720p">&lt; 720p</label>
+          <label class="checkbox-label"><input type="checkbox" id="q-720p" ${state.qualities.includes('720p') ? 'checked' : ''} value="720p">720p</label>
+          <label class="checkbox-label"><input type="checkbox" id="q-1080p" ${state.qualities.includes('1080p') ? 'checked' : ''} value="1080p">1080p</label>
+          <label class="checkbox-label"><input type="checkbox" id="q-4k" ${state.qualities.includes('4K') ? 'checked' : ''} value="4K">4K</label>
+        </div>
+      `;
+    } else if (cat === 'anime') {
+      row1 += `
+        <div class="filter-group quality-group">
+          <label>Качество:</label>
+          <label class="checkbox-label"><input type="checkbox" id="q-less720p" ${state.qualities.includes('<720p') ? 'checked' : ''} value="<720p">&lt; 720p</label>
+          <label class="checkbox-label"><input type="checkbox" id="q-720p" ${state.qualities.includes('720p') ? 'checked' : ''} value="720p">720p</label>
+          <label class="checkbox-label"><input type="checkbox" id="q-1080p" ${state.qualities.includes('1080p') ? 'checked' : ''} value="1080p">1080p</label>
+        </div>
+      `;
+    }
 
-        <!-- Rating Filter -->
+    // Row 1 Ratings
+    if (cat === 'movies') {
+      row1 += `
         <div class="filter-group rating-group">
           <label class="checkbox-label">
             <input type="checkbox" id="rating-toggle" ${state.min_rating > 0 ? 'checked' : ''}>
-            <span>⭐ Рейтинг > 7.0</span>
+            <span>⭐ Рейтинг &gt; 7.0</span>
           </label>
         </div>
+      `;
+    } else if (cat === 'series') {
+      row1 += `
+        <div class="filter-group rating-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="rating-toggle" ${state.min_rating > 0 ? 'checked' : ''}>
+            <span>⭐ Рейтинг &gt; 8.0</span>
+          </label>
+        </div>
+      `;
+    } else if (cat === 'anime') {
+      row1 += `
+        <div class="filter-group rating-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="rating-toggle" ${state.min_rating > 0 ? 'checked' : ''}>
+            <span>⭐ Shiki/MAL &gt; 8.0</span>
+          </label>
+        </div>
+      `;
+    } else if (cat === 'games') {
+      row1 += `
+        <div class="filter-group rating-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="rating-toggle" ${state.min_rating > 0 ? 'checked' : ''}>
+            <span>⭐ Рейтинг &gt; 75 (MC / OC / Steam)</span>
+          </label>
+        </div>
+      `;
+    }
 
-        <!-- Russian Filter -->
+    // Row 1 Year & Genre dropdowns
+    if (['movies', 'series', 'anime'].includes(cat)) {
+      row1 += `
+        <div class="filter-group year-group">
+          <label for="year-select">Год:</label>
+          <select id="year-select"><option value="all">Все годы</option></select>
+        </div>
+        <div class="filter-group genre-group">
+          <label for="genre-select">Жанр:</label>
+          <select id="genre-select"><option value="all">Все жанры</option></select>
+        </div>
+      `;
+    } else if (cat === 'games') {
+      row1 += `
+        <div class="filter-group">
+          <label for="games-genre-select">Жанр:</label>
+          <select id="games-genre-select">
+            ${GAME_GENRES.map(g => `<option value="${g}" ${state.genre === g ? 'selected' : ''}>${g === 'all' ? 'Все жанры' : g}</option>`).join('')}
+          </select>
+        </div>
+      `;
+    }
+
+    row1 += `
+      <button id="btn-reset-filters" class="btn-reset" title="Сбросить все фильтры на стандартные">✕ Сброс</button>
+    `;
+
+    // Build Row 2: Category-specific controls
+    let row2 = '';
+    if (cat === 'movies') {
+      row2 = `
         <div class="filter-group russian-group">
           <label class="checkbox-label">
             <input type="checkbox" id="russian-toggle" ${state.origin === 'russian' ? 'checked' : ''}>
             <span>Русское</span>
           </label>
         </div>
-
-        <!-- Year Dropdown -->
-        <div class="filter-group year-group">
-          <label for="year-select">Год:</label>
-          <select id="year-select"><option value="all">Все годы</option></select>
-        </div>
-
-        <!-- Genre Dropdown -->
-        <div class="filter-group genre-group">
-          <label for="genre-select">Жанр:</label>
-          <select id="genre-select"><option value="all">Все жанры</option></select>
-        </div>
       `;
     } else if (cat === 'series') {
-      controlsHtml += `
-        <!-- Ongoings / Status -->
+      row2 = `
+        <div class="filter-group russian-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="russian-toggle" ${state.origin === 'russian' ? 'checked' : ''}>
+            <span>Русское</span>
+          </label>
+        </div>
         <div class="filter-group">
           <label for="series-ongoing-select">Статус:</label>
           <select id="series-ongoing-select">
@@ -321,165 +411,75 @@ document.addEventListener('DOMContentLoaded', () => {
             <option value="ongoing" ${state.ongoing === 'ongoing' ? 'selected' : ''}>Онгоинги</option>
           </select>
         </div>
-
-        <!-- Streaming Platform -->
         <div class="filter-group">
           <label for="series-streaming-select">Стриминг:</label>
           <select id="series-streaming-select">
             ${STREAMING_PLATFORMS.map(p => `<option value="${p}" ${state.streaming === p ? 'selected' : ''}>${p === 'all' ? 'Все платформы' : p}</option>`).join('')}
           </select>
         </div>
-
-        <!-- Voiceover Studios -->
         <div class="filter-group">
           <label for="series-voice-select">Озвучка:</label>
           <select id="series-voice-select">
             ${SERIES_VOICEOVERS.map(v => `<option value="${v}" ${state.voiceover === v ? 'selected' : ''}>${v === 'all' ? 'Все студии' : v}</option>`).join('')}
           </select>
         </div>
-
-        <!-- Quality Filter -->
-        <div class="filter-group quality-group">
-          <label>Качество:</label>
-          <label class="checkbox-label"><input type="checkbox" id="q-1080p" ${state.qualities.includes('1080p') ? 'checked' : ''} value="1080p"> 1080p</label>
-          <label class="checkbox-label"><input type="checkbox" id="q-720p" ${state.qualities.includes('720p') ? 'checked' : ''} value="720p"> 720p</label>
-          <label class="checkbox-label"><input type="checkbox" id="q-4k" ${state.qualities.includes('4K') ? 'checked' : ''} value="4K"> 4K</label>
-        </div>
-
-        <!-- Rating Filter -->
-        <div class="filter-group rating-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="rating-toggle" ${state.min_rating > 0 ? 'checked' : ''}>
-            <span>⭐ Рейтинг > 7.0</span>
-          </label>
-        </div>
-
-        <!-- Year Dropdown -->
-        <div class="filter-group year-group">
-          <label for="year-select">Год:</label>
-          <select id="year-select"><option value="all">Все годы</option></select>
-        </div>
-
-        <!-- Genre Dropdown -->
-        <div class="filter-group genre-group">
-          <label for="genre-select">Жанр:</label>
-          <select id="genre-select"><option value="all">Все жанры</option></select>
-        </div>
       `;
     } else if (cat === 'anime') {
-      controlsHtml += `
-        <!-- Anime Type -->
+      row2 = `
         <div class="filter-group">
           <label for="anime-type-select">Тип:</label>
           <select id="anime-type-select">
             ${ANIME_TYPES.map(t => `<option value="${t}" ${state.anime_type === t ? 'selected' : ''}>${t === 'all' ? 'Все типы' : t}</option>`).join('')}
           </select>
         </div>
-
-        <!-- Anime Studio -->
         <div class="filter-group">
           <label for="anime-studio-select">Озвучка:</label>
           <select id="anime-studio-select">
             ${ANIME_STUDIOS.map(s => `<option value="${s}" ${state.voiceover === s ? 'selected' : ''}>${s === 'all' ? 'Все студии' : s}</option>`).join('')}
           </select>
         </div>
-
-        <!-- Subtitles Checkbox -->
         <div class="filter-group">
           <label class="checkbox-label">
             <input type="checkbox" id="subtitles-toggle" ${state.has_subtitles ? 'checked' : ''}>
             <span>Субтитры</span>
           </label>
         </div>
-
-        <!-- Quality Filter -->
-        <div class="filter-group quality-group">
-          <label>Качество:</label>
-          <label class="checkbox-label"><input type="checkbox" id="q-1080p" ${state.qualities.includes('1080p') ? 'checked' : ''} value="1080p"> 1080p</label>
-          <label class="checkbox-label"><input type="checkbox" id="q-720p" ${state.qualities.includes('720p') ? 'checked' : ''} value="720p"> 720p</label>
-        </div>
-
-        <!-- Rating Filter -->
-        <div class="filter-group rating-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="rating-toggle" ${state.min_rating > 0 ? 'checked' : ''}>
-            <span>⭐ Shiki/MAL > 7.0</span>
-          </label>
-        </div>
-
-        <!-- Year Dropdown -->
-        <div class="filter-group year-group">
-          <label for="year-select">Год:</label>
-          <select id="year-select"><option value="all">Все годы</option></select>
-        </div>
-
-        <!-- Genre Dropdown -->
-        <div class="filter-group genre-group">
-          <label for="genre-select">Жанр:</label>
-          <select id="genre-select"><option value="all">Все жанры</option></select>
-        </div>
       `;
     } else if (cat === 'games') {
-      controlsHtml += `
-        <!-- Repack Author -->
+      row2 = `
         <div class="filter-group">
           <label for="games-repacker-select">Репакер:</label>
           <select id="games-repacker-select">
             ${GAME_REPACKERS.map(r => `<option value="${r}" ${state.repack_author === r ? 'selected' : ''}>${r === 'all' ? 'Все авторы' : r}</option>`).join('')}
           </select>
         </div>
-
-        <!-- Release Format -->
         <div class="filter-group">
           <label for="games-format-select">Формат:</label>
           <select id="games-format-select">
             ${GAME_FORMATS.map(f => `<option value="${f}" ${state.release_format === f ? 'selected' : ''}>${f === 'all' ? 'Все форматы' : f}</option>`).join('')}
           </select>
         </div>
-
-        <!-- Crack Status -->
         <div class="filter-group">
           <label for="games-crack-select">Таблетка:</label>
           <select id="games-crack-select">
             ${GAME_CRACKS.map(c => `<option value="${c}" ${state.crack_status === c ? 'selected' : ''}>${c === 'all' ? 'Все статусы' : c}</option>`).join('')}
           </select>
         </div>
-
-        <!-- Genre -->
-        <div class="filter-group">
-          <label for="games-genre-select">Жанр:</label>
-          <select id="games-genre-select">
-            ${GAME_GENRES.map(g => `<option value="${g}" ${state.genre === g ? 'selected' : ''}>${g === 'all' ? 'Все жанры' : g}</option>`).join('')}
-          </select>
-        </div>
-
-        <!-- Metacritic Rating Filter -->
-        <div class="filter-group rating-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="rating-toggle" ${state.min_rating > 0 ? 'checked' : ''}>
-            <span>⭐ Рейтинг > 75 (MC / OC)</span>
-          </label>
-        </div>
       `;
     } else if (cat === 'software') {
-      controlsHtml += `
-        <!-- Software Category -->
+      row2 = `
         <div class="filter-group">
           <label for="soft-cat-select">Категория:</label>
           <select id="soft-cat-select">
             ${SOFT_CATEGORIES.map(c => `<option value="${c}" ${state.software_category === c ? 'selected' : ''}>${c === 'all' ? 'Все категории' : c}</option>`).join('')}
           </select>
         </div>
-
-        <!-- Software Format -->
         <div class="filter-group">
           <label for="soft-format-select">Формат:</label>
           <select id="soft-format-select">
             ${SOFT_FORMATS.map(f => `<option value="${f}" ${state.release_format === f ? 'selected' : ''}>${f === 'all' ? 'Все форматы' : f}</option>`).join('')}
           </select>
         </div>
-
-        <!-- Software Repacker / Author -->
         <div class="filter-group">
           <label for="soft-author-select">Автор сборки:</label>
           <select id="soft-author-select">
@@ -489,14 +489,11 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     }
 
-    // Reset Button
-    controlsHtml += `
-      <button id="btn-reset-filters" class="btn-reset" title="Сбросить все фильтры на стандартные">
-        ✕ Сброс
-      </button>
+    filtersContainer.innerHTML = `
+      <div class="toolbar-row toolbar-row-primary">${row1}</div>
+      ${row2 ? `<div class="toolbar-row toolbar-row-secondary">${row2}</div>` : ''}
     `;
 
-    filtersContainer.innerHTML = controlsHtml;
     bindToolbarEvents();
   }
 
@@ -558,159 +555,95 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-    // Series selects
-    const seriesOngoing = document.getElementById('series-ongoing-select');
-    if (seriesOngoing) {
-      seriesOngoing.addEventListener('change', (e) => {
-        state.ongoing = e.target.value;
-        applyFilters();
+    // Subcategory switcher buttons for Watchlist and Ignored
+    document.querySelectorAll('.subtab-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        state.curationSubcategory = b.dataset.subcat || 'all';
+        document.querySelectorAll('.subtab-btn').forEach(btn => btn.classList.remove('active'));
+        b.classList.add('active');
+        state.page = 1;
+        fetchReleases();
       });
-    }
+    });
 
-    const seriesStreaming = document.getElementById('series-streaming-select');
-    if (seriesStreaming) {
-      seriesStreaming.addEventListener('change', (e) => {
-        state.streaming = e.target.value;
-        applyFilters();
-      });
-    }
-
-    const seriesVoice = document.getElementById('series-voice-select');
-    if (seriesVoice) {
-      seriesVoice.addEventListener('change', (e) => {
-        state.voiceover = e.target.value;
-        applyFilters();
-      });
-    }
-
-    // Anime selects
-    const animeType = document.getElementById('anime-type-select');
-    if (animeType) {
-      animeType.addEventListener('change', (e) => {
-        state.anime_type = e.target.value;
-        applyFilters();
-      });
-    }
-
-    const animeStudio = document.getElementById('anime-studio-select');
-    if (animeStudio) {
-      animeStudio.addEventListener('change', (e) => {
-        state.voiceover = e.target.value;
-        applyFilters();
-      });
-    }
-
-    const subToggle = document.getElementById('subtitles-toggle');
-    if (subToggle) {
-      subToggle.addEventListener('change', (e) => {
-        state.has_subtitles = e.target.checked;
-        applyFilters();
-      });
-    }
-
-    // Games selects
-    const gameRepacker = document.getElementById('games-repacker-select');
-    if (gameRepacker) {
-      gameRepacker.addEventListener('change', (e) => {
-        state.repack_author = e.target.value;
-        applyFilters();
-      });
-    }
-
-    const gameFormat = document.getElementById('games-format-select');
-    if (gameFormat) {
-      gameFormat.addEventListener('change', (e) => {
-        state.release_format = e.target.value;
-        applyFilters();
-      });
-    }
-
-    const gameCrack = document.getElementById('games-crack-select');
-    if (gameCrack) {
-      gameCrack.addEventListener('change', (e) => {
-        state.crack_status = e.target.value;
-        applyFilters();
-      });
-    }
-
-    const gameGenre = document.getElementById('games-genre-select');
-    if (gameGenre) {
-      gameGenre.addEventListener('change', (e) => {
-        state.genre = e.target.value;
-        applyFilters();
-      });
-    }
-
-    // Software selects
-    const softCat = document.getElementById('soft-cat-select');
-    if (softCat) {
-      softCat.addEventListener('change', (e) => {
-        state.software_category = e.target.value;
-        applyFilters();
-      });
-    }
-
-    const softFormat = document.getElementById('soft-format-select');
-    if (softFormat) {
-      softFormat.addEventListener('change', (e) => {
-        state.release_format = e.target.value;
-        applyFilters();
-      });
-    }
-
-    const softAuthor = document.getElementById('soft-author-select');
-    if (softAuthor) {
-      softAuthor.addEventListener('change', (e) => {
-        state.repack_author = e.target.value;
-        applyFilters();
-      });
-    }
-
-    // Year and Genre selects for movies, series, anime
-    const yearSelect = document.getElementById('year-select');
-    if (yearSelect) {
-      yearSelect.addEventListener('change', (e) => {
-        state.year = e.target.value;
-        applyFilters();
-      });
-    }
-
-    const genreSelect = document.getElementById('genre-select');
-    if (genreSelect) {
-      genreSelect.addEventListener('change', (e) => {
-        state.genre = e.target.value;
-        applyFilters();
-      });
-    }
-
-    // Rating toggle
-    const ratingToggle = document.getElementById('rating-toggle');
-    if (ratingToggle) {
-      ratingToggle.addEventListener('change', (e) => {
-        state.min_rating = e.target.checked ? (state.category === 'games' ? 75.0 : 7.0) : 0.0;
-        applyFilters();
-      });
-    }
-
-    // Russian toggle
-    const russianToggle = document.getElementById('russian-toggle');
-    if (russianToggle) {
-      russianToggle.addEventListener('change', (e) => {
-        state.origin = e.target.checked ? 'russian' : 'foreign';
-        applyFilters();
-      });
-    }
+    // NOTE: Checkboxes and dropdowns intentionally do NOT auto-submit on change.
+    // The user MUST click "Найти" or press Enter in search to apply filters!
   }
 
   function applyFilters() {
     const searchInput = document.getElementById('search-input');
     if (searchInput) state.search = searchInput.value.trim();
 
+    // Qualities
     const activeQualities = [];
-    if (document.getElementById('q-1080p')?.checked) activeQualities.push('1080p');
+    if (document.getElementById('q-less720p')?.checked) activeQualities.push('<720p');
     if (document.getElementById('q-720p')?.checked) activeQualities.push('720p');
+    if (document.getElementById('q-1080p')?.checked) activeQualities.push('1080p');
     if (document.getElementById('q-4k')?.checked) activeQualities.push('4K');
     state.qualities = activeQualities;
+
+    // Rating
+    const ratingToggle = document.getElementById('rating-toggle');
+    if (ratingToggle) {
+      if (ratingToggle.checked) {
+        state.min_rating = (state.category === 'games') ? 75.0 : ((state.category === 'movies') ? 7.0 : 8.0);
+      } else {
+        state.min_rating = 0.0;
+      }
+    }
+
+    // Russian / Origin
+    const russianToggle = document.getElementById('russian-toggle');
+    if (russianToggle) {
+      state.origin = russianToggle.checked ? 'russian' : 'foreign';
+    }
+
+    // Year & Genre
+    const yearSelect = document.getElementById('year-select');
+    if (yearSelect) state.year = yearSelect.value;
+
+    const genreSelect = document.getElementById('genre-select') || document.getElementById('games-genre-select');
+    if (genreSelect) state.genre = genreSelect.value;
+
+    // Series
+    const seriesOngoing = document.getElementById('series-ongoing-select');
+    if (seriesOngoing) state.ongoing = seriesOngoing.value;
+
+    const seriesStreaming = document.getElementById('series-streaming-select');
+    if (seriesStreaming) state.streaming = seriesStreaming.value;
+
+    const seriesVoice = document.getElementById('series-voice-select');
+    if (seriesVoice) state.voiceover = seriesVoice.value;
+
+    // Anime
+    const animeType = document.getElementById('anime-type-select');
+    if (animeType) state.anime_type = animeType.value;
+
+    const animeStudio = document.getElementById('anime-studio-select');
+    if (animeStudio) state.voiceover = animeStudio.value;
+
+    const subToggle = document.getElementById('subtitles-toggle');
+    if (subToggle) state.has_subtitles = subToggle.checked;
+
+    // Games
+    const gameRepacker = document.getElementById('games-repacker-select');
+    if (gameRepacker) state.repack_author = gameRepacker.value;
+
+    const gameFormat = document.getElementById('games-format-select');
+    if (gameFormat) state.release_format = gameFormat.value;
+
+    const gameCrack = document.getElementById('games-crack-select');
+    if (gameCrack) state.crack_status = gameCrack.value;
+
+    // Software
+    const softCat = document.getElementById('soft-cat-select');
+    if (softCat) state.software_category = softCat.value;
+
+    const softFormat = document.getElementById('soft-format-select');
+    if (softFormat) state.release_format = softFormat.value;
+
+    const softAuthor = document.getElementById('soft-author-select');
+    if (softAuthor) state.repack_author = softAuthor.value;
 
     state.page = 1;
     fetchReleases();
@@ -735,6 +668,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.release_format = 'all';
     state.crack_status = 'all';
     state.software_category = 'all';
+    state.curationSubcategory = 'all';
 
     renderCategoryToolbar();
     loadYearsAndGenres().finally(() => {
@@ -749,10 +683,23 @@ document.addEventListener('DOMContentLoaded', () => {
       .then(counts => {
         if (countWatchlist) countWatchlist.textContent = counts.watchlist || 0;
         if (countIgnored) countIgnored.textContent = counts.ignored || 0;
+
+        if (counts.by_category) {
+          const isWatch = state.view === 'watchlist';
+          const type = isWatch ? 'watchlist' : 'ignored';
+          let totalSum = 0;
+          Object.keys(counts.by_category).forEach(cat => {
+            const cnt = counts.by_category[cat][type] || 0;
+            totalSum += cnt;
+            const el = document.getElementById(`subtab-count-${cat}`);
+            if (el) el.textContent = `(${cnt})`;
+          });
+          const allEl = document.getElementById('subtab-count-all');
+          if (allEl) allEl.textContent = `(${totalSum})`;
+        }
       })
       .catch(() => {});
   }
-
   function loadYearsAndGenres() {
     const cat = state.category;
     if (!['movies', 'series', 'anime'].includes(cat)) {
@@ -818,8 +765,11 @@ document.addEventListener('DOMContentLoaded', () => {
       cardsGrid.style.display = 'none';
       tableViewContainer.style.display = 'block';
 
+      const curSubcat = state.curationSubcategory || 'all';
+      const catTitle = curSubcat === 'all' ? 'Все категории' : getCategoryTitle(curSubcat);
+
       const p = new URLSearchParams({
-        category: state.category,
+        category: curSubcat,
         search: state.search,
         page: state.page,
         limit: state.limit
@@ -859,8 +809,11 @@ document.addEventListener('DOMContentLoaded', () => {
       cardsGrid.style.display = 'grid';
       tableViewContainer.style.display = 'none';
 
+      const curSubcat = state.curationSubcategory || 'all';
+      const catTitle = curSubcat === 'all' ? 'Все категории' : getCategoryTitle(curSubcat);
+
       const p = new URLSearchParams({
-        category: state.category,
+        category: curSubcat,
         search: state.search,
         page: state.page,
         limit: state.limit
@@ -1259,11 +1212,17 @@ document.addEventListener('DOMContentLoaded', () => {
       if (isSeriesOrAnimeSeries) {
         const sCount = item.seasons_count || parseSeasonFromTitle(item.title || item.title_ru);
         const sStr = formatSeasonsCount(sCount);
-        const dateStr = item.date_added ? `${item.date_added}` : 'Недавно';
         metaRowHtml = `
-          <div class="card-meta-row card-meta-series">
-            <span class="card-seasons-badge" title="Всего сезонов">📺 ${escapeHtml(sStr)}</span>
-            <span class="card-series-date" title="Дата выхода последней серии / обновления">📅 ${escapeHtml(dateStr)}</span>
+          <div class="card-meta-row card-meta-series" style="margin-bottom: 4px;">
+            <span class="card-seasons-badge" title="Последний вышедший сезон">📺 ${escapeHtml(sStr)}</span>
+            <span class="card-size">${escapeHtml(item.size_str || `${item.size_gb} GB`)}</span>
+          </div>
+          <div class="card-meta-row">
+            <div class="card-peers">
+              <span class="seeds" title="Раздают (сиды)">▲ ${item.seeds}</span>
+              <span class="peers" title="Качают (пиры)">▼ ${item.peers}</span>
+            </div>
+            ${item.date_added ? `<span class="card-series-date" title="Дата выхода / обновления">📅 ${escapeHtml(item.date_added)}</span>` : ''}
           </div>
         `;
       } else {
@@ -1415,8 +1374,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // -------------------------------------------------------------
   // Interactive Modal with Category Spoilers & Wide Torrent Table
   // -------------------------------------------------------------
-  function buildWideTorrentTable(mainItem, alternatives, category) {
-    const allReleases = [mainItem, ...(alternatives || [])];
+  function buildWideTorrentTable(validAlts, category) {
+    if (!validAlts || validAlts.length === 0) return '';
     const isGame = category === 'games';
     const isSoft = category === 'software';
 
@@ -1435,21 +1394,22 @@ document.addEventListener('DOMContentLoaded', () => {
             </tr>
           </thead>
           <tbody>
-            ${allReleases.map((rel, idx) => {
-              const isMain = idx === 0;
+            ${validAlts.map(rel => {
               const qStr = rel.quality || rel.release_format || 'HD';
-              const voiceOrAuthor = rel.voice_studio || rel.repack_author || rel.voiceover || '—';
+              const hasDetails = Boolean(rel.voice_studio || rel.repack_author || rel.voiceover || rel.subtitles || rel.crack_status || isSoft);
+              const voiceOrAuthor = rel.voice_studio || rel.repack_author || rel.voiceover || (hasDetails ? '—' : 'Загрузка...');
               const subOrCrack = isGame 
                 ? (rel.crack_status || '—') 
-                : (isSoft ? (rel.release_format || '—') : (rel.has_subtitles ? 'Есть' : (rel.subtitles ? 'Да' : '—')));
+                : (isSoft ? (rel.release_format || '—') : (rel.has_subtitles ? 'Есть' : (rel.subtitles ? 'Да' : (hasDetails ? '—' : 'Загрузка...'))));
+              const loadingClass = !hasDetails ? 'cell-loading' : '';
               return `
-                <tr style="${isMain ? 'background: rgba(0, 255, 204, 0.06); font-weight: 500;' : ''}">
+                <tr>
                   <td>
                     <span class="badge-quality" style="position:static; display:inline-block; margin-right:4px;">${escapeHtml(qStr)}</span>
-                    ${isMain ? '<span style="color:var(--accent); font-size:11px;">[Текущая]</span> ' : ''}${escapeHtml(rel.title_ru || '')}
+                    ${escapeHtml(rel.title_ru || rel.title || '')}
                   </td>
-                  <td>${escapeHtml(voiceOrAuthor)}</td>
-                  <td>${escapeHtml(subOrCrack)}</td>
+                  <td><span class="alt-voice-cell ${loadingClass}" data-tid="${rel.torrent_id}">${escapeHtml(voiceOrAuthor)}</span></td>
+                  <td><span class="alt-sub-cell ${loadingClass}" data-tid="${rel.torrent_id}">${escapeHtml(subOrCrack)}</span></td>
                   <td><strong>${escapeHtml(rel.size_str || `${rel.size_gb} GB`)}</strong></td>
                   <td><span style="color:var(--accent);">▲ ${rel.seeds}</span> <span style="color:var(--text-muted); margin-left:4px;">▼ ${rel.peers}</span></td>
                   <td><a href="${rel.torrent_url}" class="btn-download-torrent" target="_blank" style="padding:4px 8px; font-size:11px; text-decoration:none;">⬇ .torrent</a></td>
@@ -1461,6 +1421,37 @@ document.addEventListener('DOMContentLoaded', () => {
         </table>
       </div>
     `;
+  }
+
+  function attachAlternativesLazyLoader(detailsElem) {
+    if (!detailsElem) return;
+    detailsElem.addEventListener('toggle', () => {
+      if (!detailsElem.open) return;
+      const loadingCells = detailsElem.querySelectorAll('.cell-loading');
+      if (loadingCells.length === 0) return;
+      const idsToFetch = Array.from(new Set(Array.from(loadingCells).map(c => c.dataset.tid).filter(Boolean)));
+      if (idsToFetch.length === 0) return;
+      fetch(`/api/alternatives_details?ids=${idsToFetch.join(',')}`)
+        .then(r => r.json())
+        .then(data => {
+          if (!data || !data.items) return;
+          data.items.forEach(it => {
+            const vCell = detailsElem.querySelector(`.alt-voice-cell[data-tid="${it.torrent_id}"]`);
+            if (vCell) {
+              vCell.classList.remove('cell-loading');
+              const vText = it.voice_studio || it.repack_author || it.voiceover || '—';
+              vCell.textContent = vText;
+            }
+            const sCell = detailsElem.querySelector(`.alt-sub-cell[data-tid="${it.torrent_id}"]`);
+            if (sCell) {
+              sCell.classList.remove('cell-loading');
+              const sText = it.has_subtitles ? 'Есть' : (it.subtitles ? 'Да' : '—');
+              sCell.textContent = sText;
+            }
+          });
+        })
+        .catch(() => {});
+    }, { once: true });
   }
 
   function openModal(torrentId) {
@@ -1516,10 +1507,13 @@ document.addEventListener('DOMContentLoaded', () => {
       seasonsList = typeof item.seasons_info === 'string' ? JSON.parse(item.seasons_info || '[]') : item.seasons_info;
     } catch(e) {}
 
-    // 1. Screenshots Spoiler (Strict On-Demand, web URLs, lazy loaded)
+    // Exclude main item from alternative releases
+    const validAlts = (item.alternatives || []).filter(a => String(a.torrent_id) !== String(item.torrent_id) && String(a.id) !== String(item.id));
+
+    // 1. Screenshots Spoiler (Strict On-Demand, default closed)
     const screenshotsSpoilerHtml = (screenshots && screenshots.length > 0)
       ? `
-        <details class="modal-spoiler" open>
+        <details class="modal-spoiler">
           <summary>🖼️ Кадры и скриншоты (${screenshots.length})</summary>
           <div class="modal-spoiler-content">
             <div class="screenshots-gallery">
@@ -1579,20 +1573,39 @@ document.addEventListener('DOMContentLoaded', () => {
       `
       : '';
 
-    // 4. Build Spoilers in Exact Required Order per Category
+    // 4. Build Spoilers in Exact Required Order (All Default Closed):
+    // Order: 1) Описание сюжета, 2) Кадры и скриншоты, 3) Видео и звук / Системные требования, 4) Другие раздачи
+    const altSpoilerLabel = (category === 'series') 
+      ? `📺 Другие сезоны, серии и раздачи (${validAlts.length})` 
+      : (category === 'games' 
+          ? `💾 Другие раздачи и репаки (${validAlts.length})` 
+          : (category === 'software' ? `💾 Раздачи и версии (${validAlts.length})` : `💾 Другие качества и раздачи (${validAlts.length})`));
+
+    const alternativesSpoilerHtml = (validAlts.length > 0)
+      ? `
+        <details class="modal-spoiler" id="alternatives-spoiler">
+          <summary>${altSpoilerLabel}</summary>
+          <div class="modal-spoiler-content">
+            ${category === 'series' ? seasonsBlockHtml : ''}
+            ${buildWideTorrentTable(validAlts, category)}
+          </div>
+        </details>
+      `
+      : '';
+
     let spoilersHtml = '';
 
     if (category === 'movies') {
       spoilersHtml = `
-        ${screenshotsSpoilerHtml}
         ${item.description ? `
-          <details class="modal-spoiler" open>
+          <details class="modal-spoiler">
             <summary>📖 Описание сюжета</summary>
             <div class="modal-spoiler-content">
               <p class="synopsis-text">${escapeHtml(item.description)}</p>
             </div>
           </details>
         ` : ''}
+        ${screenshotsSpoilerHtml}
         <details class="modal-spoiler">
           <summary>🔊 Видео и звук (технические параметры)</summary>
           <div class="modal-spoiler-content">
@@ -1600,31 +1613,19 @@ document.addEventListener('DOMContentLoaded', () => {
             ${audioSubsBlockHtml}
           </div>
         </details>
-        <details class="modal-spoiler" open>
-          <summary>💾 Другие качества и раздачи (${(item.alternatives || []).length + 1})</summary>
-          <div class="modal-spoiler-content">
-            ${buildWideTorrentTable(item, item.alternatives, category)}
-          </div>
-        </details>
+        ${alternativesSpoilerHtml}
       `;
     } else if (category === 'series') {
       spoilersHtml = `
-        ${screenshotsSpoilerHtml}
         ${item.description ? `
-          <details class="modal-spoiler" open>
+          <details class="modal-spoiler">
             <summary>📖 Описание сюжета</summary>
             <div class="modal-spoiler-content">
               <p class="synopsis-text">${escapeHtml(item.description)}</p>
             </div>
           </details>
         ` : ''}
-        <details class="modal-spoiler" open>
-          <summary>📺 Другие сезоны, серии и раздачи (${(item.alternatives || []).length + 1})</summary>
-          <div class="modal-spoiler-content">
-            ${seasonsBlockHtml}
-            ${buildWideTorrentTable(item, item.alternatives, category)}
-          </div>
-        </details>
+        ${screenshotsSpoilerHtml}
         <details class="modal-spoiler">
           <summary>🔊 Видео и звук</summary>
           <div class="modal-spoiler-content">
@@ -1632,28 +1633,23 @@ document.addEventListener('DOMContentLoaded', () => {
             ${audioSubsBlockHtml}
           </div>
         </details>
+        ${alternativesSpoilerHtml}
       `;
     } else if (category === 'anime') {
       spoilersHtml = `
-        ${screenshotsSpoilerHtml}
         ${item.description ? `
-          <details class="modal-spoiler" open>
+          <details class="modal-spoiler">
             <summary>📖 Описание сюжета</summary>
             <div class="modal-spoiler-content">
               <p class="synopsis-text">${escapeHtml(item.description)}</p>
             </div>
           </details>
         ` : ''}
-        <details class="modal-spoiler" open>
+        ${screenshotsSpoilerHtml}
+        <details class="modal-spoiler">
           <summary>🎙️ Озвучка и субтитры</summary>
           <div class="modal-spoiler-content">
             ${audioSubsBlockHtml}
-          </div>
-        </details>
-        <details class="modal-spoiler" open>
-          <summary>💾 Раздачи и качества (${(item.alternatives || []).length + 1})</summary>
-          <div class="modal-spoiler-content">
-            ${buildWideTorrentTable(item, item.alternatives, category)}
           </div>
         </details>
         <details class="modal-spoiler">
@@ -1663,20 +1659,21 @@ document.addEventListener('DOMContentLoaded', () => {
             ${item.audio_info ? `<div style="font-size: 13px;"><strong>Звук:</strong> ${escapeHtml(item.audio_info)}</div>` : ''}
           </div>
         </details>
+        ${alternativesSpoilerHtml}
       `;
     } else if (category === 'games') {
       spoilersHtml = `
-        ${screenshotsSpoilerHtml}
         ${item.description ? `
-          <details class="modal-spoiler" open>
+          <details class="modal-spoiler">
             <summary>🎮 Об игре</summary>
             <div class="modal-spoiler-content">
               <p class="synopsis-text">${escapeHtml(item.description)}</p>
             </div>
           </details>
         ` : ''}
+        ${screenshotsSpoilerHtml}
         ${(item.repack_features || item.repack_author) ? `
-          <details class="modal-spoiler" open>
+          <details class="modal-spoiler">
             <summary>📦 Особенности репака / релиза</summary>
             <div class="modal-spoiler-content">
               ${item.repack_author ? `<div class="meta-highlight-box"><h4>Релиз от: ${escapeHtml(item.repack_author)}</h4>Таблетка / Лекарство: <strong>${escapeHtml(item.crack_status || 'Вшито')}</strong></div>` : ''}
@@ -1685,33 +1682,28 @@ document.addEventListener('DOMContentLoaded', () => {
           </details>
         ` : ''}
         ${item.system_reqs ? `
-          <details class="modal-spoiler" open>
+          <details class="modal-spoiler">
             <summary>⚙️ Системные требования</summary>
             <div class="modal-spoiler-content">
               <p class="synopsis-text" style="white-space: pre-line; font-family: monospace; font-size: 13px;">${escapeHtml(item.system_reqs)}</p>
             </div>
           </details>
         ` : ''}
-        <details class="modal-spoiler" open>
-          <summary>💾 Другие раздачи и репаки (${(item.alternatives || []).length + 1})</summary>
-          <div class="modal-spoiler-content">
-            ${buildWideTorrentTable(item, item.alternatives, category)}
-          </div>
-        </details>
+        ${alternativesSpoilerHtml}
       `;
     } else if (category === 'software') {
       spoilersHtml = `
-        ${screenshotsSpoilerHtml}
         ${item.description ? `
-          <details class="modal-spoiler" open>
+          <details class="modal-spoiler">
             <summary>💻 О программе</summary>
             <div class="modal-spoiler-content">
               <p class="synopsis-text">${escapeHtml(item.description)}</p>
             </div>
           </details>
         ` : ''}
+        ${screenshotsSpoilerHtml}
         ${(item.repack_features || item.repack_author) ? `
-          <details class="modal-spoiler" open>
+          <details class="modal-spoiler">
             <summary>📦 Особенности сборки / репака</summary>
             <div class="modal-spoiler-content">
               ${item.repack_author ? `<div class="meta-highlight-box"><h4>Автор сборки: ${escapeHtml(item.repack_author)}</h4>Категория: <strong>${escapeHtml(item.software_category || 'ПО')}</strong></div>` : ''}
@@ -1720,19 +1712,14 @@ document.addEventListener('DOMContentLoaded', () => {
           </details>
         ` : ''}
         ${item.system_reqs ? `
-          <details class="modal-spoiler" open>
+          <details class="modal-spoiler">
             <summary>⚙️ Системные требования</summary>
             <div class="modal-spoiler-content">
               <p class="synopsis-text" style="white-space: pre-line; font-family: monospace; font-size: 13px;">${escapeHtml(item.system_reqs)}</p>
             </div>
           </details>
         ` : ''}
-        <details class="modal-spoiler" open>
-          <summary>💾 Раздачи и версии (${(item.alternatives || []).length + 1})</summary>
-          <div class="modal-spoiler-content">
-            ${buildWideTorrentTable(item, item.alternatives, category)}
-          </div>
-        </details>
+        ${alternativesSpoilerHtml}
       `;
     }
 
@@ -1755,18 +1742,42 @@ document.addEventListener('DOMContentLoaded', () => {
       if (item.quality) modalRatingsRowHtml += `<div class="rating-badge-lg" style="background: var(--bg-card); border: 1px solid var(--border-color); color: #fff;">${escapeHtml(item.quality)}</div>`;
     }
 
+    // Games Metadata Box
+    let gameMetaBoxHtml = '';
+    if (category === 'games') {
+      const gSteam = item.steam_rating ? `<span class="steam-rating-badge">🎮 Steam: ${escapeHtml(item.steam_rating)}</span>` : '';
+      const gDev = item.developer ? `<div class="game-meta-item">Разработчик:<strong>${escapeHtml(item.developer)}</strong></div>` : '';
+      const gPub = item.publisher ? `<div class="game-meta-item">Издатель:<strong>${escapeHtml(item.publisher)}</strong></div>` : '';
+      const gPlat = item.platform ? `<div class="game-meta-item">Платформа:<strong>${escapeHtml(item.platform)}</strong></div>` : '';
+      const gEng = item.engine ? `<div class="game-meta-item">Движок:<strong>${escapeHtml(item.engine)}</strong></div>` : '';
+      const gDate = item.release_date ? `<div class="game-meta-item">Дата выхода:<strong>${escapeHtml(item.release_date)}</strong></div>` : '';
+
+      if (gDev || gPub || gPlat || gEng || gDate || gSteam) {
+        gameMetaBoxHtml = `
+          <div class="game-metadata-grid">
+            ${gDev}
+            ${gPub}
+            ${gDate}
+            ${gPlat}
+            ${gEng}
+            ${gSteam ? `<div class="game-meta-item">${gSteam}</div>` : ''}
+          </div>
+        `;
+      }
+    }
+
     modalContent.innerHTML = `
       <div class="modal-left">
         ${item.poster_url 
-          ? `<img class="modal-poster" src="${item.poster_url}" alt="Постер" onerror="this.onerror=null; repairPoster(this, '${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\'")}', ${item.year || 0}, '${(item.title_en || '').replace(/'/g, "\\'")}');"/>` 
+          ? `<img class="modal-poster" src="${item.poster_url}" alt="Постер" onerror="this.onerror=null; repairPoster(this, '${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\'")}', ${item.year || 0}, '${(item.title_en || '').replace(/'/g, "\\")}');"/>` 
           : '<div class="poster-placeholder" style="border-radius:12px; height: 380px;">🎬</div>'}
         
         <!-- Modal Quick Actions -->
         <div style="display: flex; gap: 8px; margin: 10px 0;">
-          <button class="btn-card-action btn-card-watch" style="flex:1;" onclick="addToWatchlist('${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\'")}'); closeModal();">
+          <button class="btn-card-action btn-card-watch" style="flex:1;" onclick="addToWatchlist('${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\")}'); closeModal();">
             💚 Заинтересовало
           </button>
-          <button class="btn-card-action btn-card-ignore" style="flex:1;" onclick="addToIgnored('${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\'")}'); closeModal();">
+          <button class="btn-card-action btn-card-ignore" style="flex:1;" onclick="addToIgnored('${item.torrent_id}', '${(item.title_ru || '').replace(/'/g, "\\")}'); closeModal();">
             🚫 Хрень
           </button>
         </div>
@@ -1806,6 +1817,8 @@ document.addEventListener('DOMContentLoaded', () => {
           ${modalRatingsRowHtml}
         </div>
 
+        ${gameMetaBoxHtml}
+
         <div class="detail-info-table">
           ${item.genre ? `<div class="detail-row"><span class="detail-label">Жанр / Категория:</span><span class="detail-value">${escapeHtml(item.genre)}</span></div>` : ''}
           ${item.director ? `<div class="detail-row"><span class="detail-label">${category === 'games' ? 'Разработчик:' : 'Режиссёр:'}</span><span class="detail-value">${escapeHtml(item.director)}</span></div>` : ''}
@@ -1818,8 +1831,13 @@ document.addEventListener('DOMContentLoaded', () => {
         ${spoilersHtml}
       </div>
     `;
-  }
 
+    // Attach lazy loader to alternatives spoiler if present
+    const altSpoiler = modalContent.querySelector('#alternatives-spoiler');
+    if (altSpoiler) {
+      attachAlternativesLazyLoader(altSpoiler);
+    }
+  }
   window.searchSeason = function(query) {
     closeModal();
     const searchInput = document.getElementById('search-input');

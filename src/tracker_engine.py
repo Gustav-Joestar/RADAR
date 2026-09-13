@@ -20,8 +20,9 @@ CATEGORY_MAP = {
     "series": [4, 6, 16],    # 4=Зарубежные сериалы, 6=Телевизор, 16=Наши сериалы
     "anime": [10],           # 10=Аниме
     "games": [8],            # 8=Игры
-    "software": [9, 12]      # 9, 12=Программы
+    "software": [9]          # 9=Софт (категория 12 - научно-популярные фильмы исключена)
 }
+
 
 CATEGORY_HUBS = {
     "movies": ["http://rutor.info/kino", "http://rutor.info/nashe_kino"],
@@ -283,7 +284,13 @@ GENRE_KEYWORDS = {
 
 def parse_date_to_timestamp(date_str):
     try:
-        parts = date_str.replace('\xa0', ' ').strip().split()
+        s = date_str.replace('\xa0', ' ').strip()
+        m_dash = re.search(r'(\d{2})-(\d{2})-(\d{4})', s)
+        if m_dash:
+            day, month, year = int(m_dash.group(1)), int(m_dash.group(2)), int(m_dash.group(3))
+            return int(datetime(year, month, day, 12, 0, 0).timestamp())
+
+        parts = s.split()
         if len(parts) >= 3:
             day = int(parts[0])
             month_str = parts[1].lower()[:3]
@@ -612,8 +619,15 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                 elif any(cue in t_lower for cue in ["от exkinoray", "files-x", "сериал ссср", "мосфильм", "ленфильм"]):
                     detected_country = "Россия"
 
-                # Initial genre
-                if category_name == "anime":
+                # Auto-reclassify series mistakenly listed under animation or movies
+                if category_name == "movies":
+                    is_series_cue = bool(re.search(r'\b(?:сезон\s*\d+|\d+\s*сезон|\d+x\d+|s\d+(?:e\d+)?|серии?\s*\d+[\d\-]*|мультсериал|мини-сериал)\b', raw_title, re.I))
+                    if is_series_cue:
+                        category_name = "series"
+                        init_genre = "Мультсериал" if any(w in t_lower for w in ["мульт", "анимац", "animation"]) else "Сериал"
+                    else:
+                        init_genre = "Мультфильм" if any(w in t_lower for w in ["мультфильм", "мультсериал"]) else "Фильм"
+                elif category_name == "anime":
                     init_genre = "Аниме"
                 elif category_name == "games":
                     init_genre = "Игры"
@@ -622,7 +636,8 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                 elif category_name == "series":
                     init_genre = "Сериал"
                 else:
-                    init_genre = "Мультфильм" if any(w in t_lower for w in ["мультфильм", "мультсериал"]) else "Фильм"
+                    init_genre = "Фильм"
+
 
                 # Extract initial title tags
                 voice_studio_init = ""
@@ -735,8 +750,8 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     "video_info": "",
                     "audio_info": "",
                     "audio_tracks": "[]",
-                    "voiceover": "",
-                    "subtitles": "",
+                    "voiceover": voice_studio_init,
+                    "subtitles": "Есть" if has_subs_init else "",
                     "genre": init_genre,
                     "director": "",
                     "actors": "",
@@ -772,8 +787,15 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
                     "anime_type": anime_type_init,
                     "software_category": "",
                     "system_reqs": "",
-                    "repack_features": ""
+                    "repack_features": "",
+                    "steam_rating": "",
+                    "developer": "",
+                    "publisher": "",
+                    "platform": "PC" if category_name == "games" else "",
+                    "engine": "",
+                    "release_date": ""
                 }
+
                 database.upsert_release(item_data)
                 scanned_torrent_ids.append(torrent_id)
 
@@ -802,9 +824,49 @@ def _process_tracker_urls(urls_to_scan, category_name, year):
 STOP_METADATA_FIELDS = (
     r'Страна|Студия|Производство|Выпущено|Премьера|Мировая премьера|Премьера в РФ|'
     r'Возраст|Рейтинг MPAA|Бюджет|Сборы|Время|Продолжительность|Качество|Качество видео|'
-    r'Формат|Видео|Видеокодек|Аудио|Аудиокодек|Звук|Перевод|Озвучивание|Озвучка|'
-    r'Субтитры|Режиссер|Режиссёр|В ролях|Актеры|Файл|Релиз|Технические|MediaInfo'
+    r'Формат|Видео|Видеокодек|Кодек|Аудио|Аудиокодек|Звук|Перевод|Озвучивание|Озвучка|'
+    r'Субтитры|Режиссер|Режиссёр|В ролях|Актеры|Файл|Релиз|Технические|MediaInfo|'
+    r'Скриншоты|Рип от|Внимание'
 )
+
+STOP_GAME_FIELDS = (
+    r'Особенности игры|Особенности репака|Особенности RePack|Особенности RePack-а|'
+    r'Включенные DLC|DLC|Дополнения|Инструкция по установке|Установка|Системные требования|'
+    r'Скриншоты|Список изменений|Патч-ноут|Важно'
+)
+
+STOP_SOFTWARE_FIELDS = (
+    r'Состав сборки|Состав пакета|Особенности RePack|Особенности сборки|Особенности версии|'
+    r'Инструкция по установке|Процедура лечения|Лечение|Таблетка|Ключи командной строки|'
+    r'Тихая установка|Системные требования|Скриншоты|Контрольные суммы|CRC32'
+)
+
+def clean_description(text, cat="movies"):
+    """Trim description by stop words according to category."""
+    if not text or not isinstance(text, str):
+        return ""
+    desc = text.strip()
+    if cat == "games":
+        parts = re.split(r'(?:\n|\r|\s{2,})(?:' + STOP_GAME_FIELDS + r')\s*:?', desc, flags=re.I)
+        if parts:
+            desc = parts[0].strip()
+    elif cat == "software":
+        parts = re.split(r'(?:\n|\r|\s{2,})(?:' + STOP_SOFTWARE_FIELDS + r')\s*:?', desc, flags=re.I)
+        if parts:
+            desc = parts[0].strip()
+    elif cat == "anime":
+        parts = re.split(rf'(?:\n|\r|\s{{2,}})(?:{STOP_METADATA_FIELDS})\s*:', desc, flags=re.IGNORECASE)
+        if parts:
+            desc = parts[0].strip()
+        desc = re.sub(rf'\s*(?:{STOP_METADATA_FIELDS})\s*:[^\n\r]+', '', desc, flags=re.IGNORECASE).strip()
+    else:
+        parts = re.split(rf'(?:\n|\r|\s{{2,}})(?:{STOP_METADATA_FIELDS})\s*:', desc, flags=re.IGNORECASE)
+        if parts:
+            desc = parts[0].strip()
+        desc = re.sub(rf'\s*(?:{STOP_METADATA_FIELDS})\s*:[^\n\r]+', '', desc, flags=re.IGNORECASE).strip()
+    return desc
+
+
 
 GENRES_DICTIONARY = [
     'боевик', 'комедия', 'триллер', 'драма', 'ужасы', 'фантастика', 'фэнтези',
@@ -957,7 +1019,7 @@ def extract_game_ratings(full_text):
     return mc_critic, mc_user, oc_rating
 
 def extract_screenshots_from_details(details_table, main_poster_url=""):
-    """Extract strictly screenshot image URLs from torrent details table without downloading them to disk."""
+    """Extract strictly screenshot image URLs from torrent details table (min 10 KB, no junk icons)."""
     if not details_table:
         return []
     screens = []
@@ -974,20 +1036,33 @@ def extract_screenshots_from_details(details_table, main_poster_url=""):
         s_lower = src.lower().strip()
         if not s_lower.startswith(('http://', 'https://')):
             continue
-        # Strictly filter out badges, icons, logos, counters, smilies, flags, userbars
+        # Strictly filter out badges, icons, logos, counters, smilies, flags, userbars, magnets
         if any(bad in s_lower for bad in [
             'rating', 'kinopoisk.ru', 'imdb/pic', '.gif', 'arrowup', 'arrowdown',
             'smilies', 'flag', 'rus_flag', 'flag_', 'userbar', 'button', 'logo_mini',
-            's.rutor.info', 'counter', 'banner', 'pixel', 'stat', 'icon'
+            's.rutor.info', 'counter', 'banner', 'pixel', 'stat', 'icon',
+            'magnet', 'download', 'torrent', 'vk.com', 'telegram', 't.me', 'arrow'
         ]):
             continue
         if s_lower in seen:
             continue
         seen.add(s_lower)
-        screens.append(src.strip())
+
+        # Quick size check: filter out images < 10 KB
+        clean_url = src.strip()
+        try:
+            h = requests.head(clean_url, timeout=1.2, allow_redirects=True, headers={'User-Agent': 'Mozilla/5.0'})
+            cl = int(h.headers.get('Content-Length', 0))
+            if cl > 0 and cl < 10240: # strictly >= 10 KB threshold
+                continue
+        except Exception:
+            pass
+
+        screens.append(clean_url)
         if len(screens) >= 16:  # Cap at 16 screenshots
             break
     return screens
+
 
 def backfill_missing_ratings(limit=30):
     """Background worker that finds movies in DB with 0 ratings and looks them up."""
@@ -1176,19 +1251,42 @@ def parse_full_details(torrent_id):
                     if p and p.lower() != 'нет':
                         subtitles_list.append(p)
 
-        # Extract description with strict boundary stopping at any metadata header
-        desc_m = re.search(
-            rf'(?:О фильме|Описание|Сюжет|О сериале|О программе|Об игре):\s*\n*(.*?)(?=\n\s*(?:{STOP_METADATA_FIELDS})\s*:|\Z)',
-            full_text,
-            re.DOTALL | re.IGNORECASE
-        )
-        description = desc_m.group(1).strip() if desc_m else ""
-        if description:
-            # Cut off any metadata lines that leaked into description text
-            parts = re.split(rf'(?:\n|\r|\s{{2,}})(?:{STOP_METADATA_FIELDS})\s*:', description, flags=re.IGNORECASE)
-            if parts:
-                description = parts[0].strip()
-            description = re.sub(rf'\s*(?:{STOP_METADATA_FIELDS})\s*:[^\n\r]+', '', description, flags=re.IGNORECASE).strip()
+        # Determine category early from DB
+        existing = database.get_release_by_id(torrent_id)
+        cat = existing.get("category", "movies") if existing else "movies"
+
+        # Category-specific description extraction with strict stop-words
+        if cat == "games":
+            desc_m = re.search(r'Описание:\s*\n*(.*?)(?=\n\s*(?:' + STOP_GAME_FIELDS + r')\s*:?|\Z)', full_text, re.DOTALL | re.I)
+            description = desc_m.group(1).strip() if desc_m else ""
+            if description:
+                parts = re.split(r'(?:\n|\r|\s{2,})(?:' + STOP_GAME_FIELDS + r')\s*:?', description, flags=re.I)
+                if parts:
+                    description = parts[0].strip()
+        elif cat == "software":
+            desc_m = re.search(r'Описание:\s*\n*(.*?)(?=\n\s*(?:' + STOP_SOFTWARE_FIELDS + r')\s*:?|\Z)', full_text, re.DOTALL | re.I)
+            description = desc_m.group(1).strip() if desc_m else ""
+            if description:
+                parts = re.split(r'(?:\n|\r|\s{2,})(?:' + STOP_SOFTWARE_FIELDS + r')\s*:?', description, flags=re.I)
+                if parts:
+                    description = parts[0].strip()
+        elif cat == "anime":
+            desc_m = re.search(rf'(?:Описание|О фильме|Сюжет):\s*\n*(.*?)(?=\n\s*(?:{STOP_METADATA_FIELDS})\s*:|\Z)', full_text, re.DOTALL | re.I)
+            description = desc_m.group(1).strip() if desc_m else ""
+            if description:
+                parts = re.split(rf'(?:\n|\r|\s{{2,}})(?:{STOP_METADATA_FIELDS})\s*:', description, flags=re.IGNORECASE)
+                if parts:
+                    description = parts[0].strip()
+                description = re.sub(rf'\s*(?:{STOP_METADATA_FIELDS})\s*:[^\n\r]+', '', description, flags=re.IGNORECASE).strip()
+        else:
+            desc_m = re.search(rf'(?:О фильме|Описание сериала|Описание|Сюжет|О сериале):\s*\n*(.*?)(?=\n\s*(?:{STOP_METADATA_FIELDS})\s*:|\Z)', full_text, re.DOTALL | re.I)
+            description = desc_m.group(1).strip() if desc_m else ""
+            if description:
+                parts = re.split(rf'(?:\n|\r|\s{{2,}})(?:{STOP_METADATA_FIELDS})\s*:', description, flags=re.IGNORECASE)
+                if parts:
+                    description = parts[0].strip()
+                description = re.sub(rf'\s*(?:{STOP_METADATA_FIELDS})\s*:[^\n\r]+', '', description, flags=re.IGNORECASE).strip()
+
 
         # 1. Fetch ratings from Kinopoisk XML (ultra-fast 0.16s via rating.kinopoisk.ru)
         kp_rating = 0.0
@@ -1267,6 +1365,14 @@ def parse_full_details(torrent_id):
         mi_m = re.search(r'(MediaInfo:?.*)', full_text, re.DOTALL | re.IGNORECASE)
         if mi_m:
             mediainfo = mi_m.group(1)[:2000].strip()
+
+        # Exact 'Добавлен' date from details table
+        date_added_full = ""
+        date_ts_full = 0
+        m_added = re.search(r'Добавлен\s*</td>\s*<td>\s*(\d{2}-\d{2}-\d{4}(?:\s+\d{2}:\d{2}:\d{2})?)', r.text)
+        if m_added:
+            date_added_full = m_added.group(1).split()[0]
+            date_ts_full = parse_date_to_timestamp(m_added.group(1))
 
         if existing:
             update_data = dict(existing)
@@ -1373,13 +1479,21 @@ def parse_full_details(torrent_id):
                 elif "gog" in f_lower:
                     rel_format = "GOG"
 
-                m_crack = re.search(r'(?:Таблетка|Crack|Защита)\s*:\s*([^\n\r]+)', full_text, re.I)
+                m_crack = re.search(r'(?:Таблетка|Crack|Защита|Лекарство)\s*:\s*([^\n\r]+)', full_text, re.I)
                 if m_crack:
                     crack_stat = m_crack.group(1).strip()
-                m_req = re.search(r'(?:Системные требования|System requirements):\s*\n*(.*?)(?=\n\s*(?:{STOP_METADATA_FIELDS}|Описание|Особенности|Скриншоты)\s*:|\Z)', full_text, re.DOTALL | re.I)
+
+                g_rel_date = find_field([r'Дата выпуска:\s*([^\n\r]+)', r'Release date:\s*([^\n\r]+)'])
+                g_dev = find_field([r'Разработчик:\s*([^\n\r]+)', r'Developer:\s*([^\n\r]+)'])
+                g_pub = find_field([r'Издательство:\s*([^\n\r]+)', r'Publisher:\s*([^\n\r]+)'])
+                g_plat = find_field([r'Платформа:\s*([^\n\r]+)', r'Platform:\s*([^\n\r]+)']) or "PC"
+                g_eng = find_field([r'Движок:\s*([^\n\r]+)', r'Engine:\s*([^\n\r]+)'])
+                g_steam = find_field([r'Пользовательские оценки в Steam:\s*([^\n\r]+)'])
+
+                m_req = re.search(r'(?:Системные требования|System requirements):\s*\n*(.*?)(?=\n\s*(?:' + STOP_GAME_FIELDS + r'|Описание|Скриншоты)\s*:?|\Z)', full_text, re.DOTALL | re.I)
                 if m_req:
                     sys_reqs = m_req.group(1).strip()[:1500]
-                m_feats = re.search(r'(?:Особенности репака|Особенности RePack|Особенности релиза):\s*\n*(.*?)(?=\n\s*(?:{STOP_METADATA_FIELDS}|Системные|Скриншоты|Описание)\s*:|\Z)', full_text, re.DOTALL | re.I)
+                m_feats = re.search(r'(?:Особенности репака|Особенности RePack|Особенности релиза|Особенности игры):\s*\n*(.*?)(?=\n\s*(?:Системные|Скриншоты|Описание)\s*:?|\Z)', full_text, re.DOTALL | re.I)
                 if m_feats:
                     repack_feats = m_feats.group(1).strip()[:1500]
 
@@ -1421,8 +1535,8 @@ def parse_full_details(torrent_id):
                 "poster_url": final_poster or "",
                 "magnet_url": magnet_url or update_data.get("magnet_url", ""),
                 "genre": genre or update_data.get("genre", ""),
-                "director": director or update_data.get("director", ""),
-                "actors": actors or update_data.get("actors", ""),
+                "director": (g_dev if cat == "games" else director) or update_data.get("director", ""),
+                "actors": (g_pub if cat == "games" else actors) or update_data.get("actors", ""),
                 "description": description or update_data.get("description", ""),
                 "country": country or update_data.get("country", ""),
                 "duration": duration or update_data.get("duration", ""),
@@ -1450,12 +1564,20 @@ def parse_full_details(torrent_id):
                 "software_category": soft_cat,
                 "system_reqs": sys_reqs,
                 "repack_features": repack_feats,
+                "steam_rating": (g_steam if cat == "games" else "") or update_data.get("steam_rating", ""),
+                "developer": (g_dev if cat == "games" else "") or update_data.get("developer", ""),
+                "publisher": (g_pub if cat == "games" else "") or update_data.get("publisher", ""),
+                "platform": (g_plat if cat == "games" else "") or update_data.get("platform", ""),
+                "engine": (g_eng if cat == "games" else "") or update_data.get("engine", ""),
+                "release_date": (g_rel_date if cat == "games" else "") or update_data.get("release_date", ""),
                 "anime_type": anime_type_val,
                 "is_ongoing": is_ong_val,
                 "episodes_released": ep_rel_val,
                 "episodes_total": ep_tot_val,
                 "seasons_count": max(len(seasons_info) if seasons_info else 0, update_data.get("seasons_count", 0)),
-                "has_subtitles": 1 if (subtitles_list or subtitles_str_fallback) else 0
+                "has_subtitles": 1 if (subtitles_list or subtitles_str_fallback) else 0,
+                "date_added": date_added_full or update_data.get("date_added", ""),
+                "date_ts": date_ts_full or update_data.get("date_ts", 0)
             })
             database.upsert_release(update_data)
 
